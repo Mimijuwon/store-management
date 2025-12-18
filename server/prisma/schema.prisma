@@ -1,0 +1,63 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Category {
+  id         Int         @id @default(autoincrement())
+  name       String      @unique
+  components Component[]
+}
+
+model Component {
+  id          Int             @id @default(autoincrement())
+  name        String
+  quantity    Int             @default(0)
+  unit        String          @default("pcs")
+  minStock    Int             @default(0)
+  location    String          @default("")
+  supplier    String          @default("")
+  imageUrl    String          @default("")
+  categoryId  Int?
+  category    Category?       @relation(fields: [categoryId], references: [id])
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  usage       UsageHistory[]
+  requests    Request[]
+}
+
+model UsageHistory {
+  id           Int       @id @default(autoincrement())
+  componentId  Int
+  component    Component @relation(fields: [componentId], references: [id])
+  quantity     Int
+  type         String
+  project      String    @default("")
+  notes        String    @default("")
+  date         DateTime  @default(now())
+}
+
+model Request {
+  id            Int       @id @default(autoincrement())
+  personnelName String
+  componentId   Int
+  component     Component @relation(fields: [componentId], references: [id])
+  quantity      Int
+  description   String    @default("")
+  status        String    @default("PENDING")
+  requestedAt   DateTime  @default(now())
+  approvedAt    DateTime?
+  returnedAt    DateTime?
+}
+
