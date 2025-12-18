@@ -10,8 +10,12 @@ import {
   Search,
 } from "lucide-react";
 
+const API_BASE = process.env.REACT_APP_API_URL;
+
 const storage = {
   async get(key) {
+    // If an API is configured, prefer backend and let frontend use localStorage only as cache
+    if (API_BASE) return null;
     if (window.storage?.get) {
       return window.storage.get(key);
     }
@@ -82,28 +86,54 @@ export default function BriechStorageSystem() {
   useEffect(() => {
     const loadData = async () => {
       try {
-        const componentsResult = await storage.get("briech-components");
-        const usageResult = await storage.get("briech-usage-history");
-        const requestsResult = await storage.get("briech-requests");
-         const categoriesResult = await storage.get("briech-categories");
+        if (API_BASE) {
+          const [componentsRes, usageRes, requestsRes, categoriesRes] =
+            await Promise.all([
+              fetch(`${API_BASE}/components`),
+              fetch(`${API_BASE}/usage`),
+              fetch(`${API_BASE}/requests`),
+              fetch(`${API_BASE}/categories`),
+            ]);
 
-        if (componentsResult?.value) {
-          setComponents(JSON.parse(componentsResult.value));
-        }
-        if (usageResult?.value) {
-          setUsageHistory(JSON.parse(usageResult.value));
-        }
-        if (requestsResult?.value) {
-          setRequests(JSON.parse(requestsResult.value));
-        }
-        if (categoriesResult?.value) {
-          const parsed = JSON.parse(categoriesResult.value);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            setCategories(parsed);
+          if (componentsRes.ok) {
+            setComponents(await componentsRes.json());
+          }
+          if (usageRes.ok) {
+            setUsageHistory(await usageRes.json());
+          }
+          if (requestsRes.ok) {
+            setRequests(await requestsRes.json());
+          }
+          if (categoriesRes.ok) {
+            const serverCategories = await categoriesRes.json();
+            if (Array.isArray(serverCategories) && serverCategories.length > 0) {
+              setCategories(serverCategories.map((cat) => cat.name ?? cat));
+            }
+          }
+        } else {
+          const componentsResult = await storage.get("briech-components");
+          const usageResult = await storage.get("briech-usage-history");
+          const requestsResult = await storage.get("briech-requests");
+          const categoriesResult = await storage.get("briech-categories");
+
+          if (componentsResult?.value) {
+            setComponents(JSON.parse(componentsResult.value));
+          }
+          if (usageResult?.value) {
+            setUsageHistory(JSON.parse(usageResult.value));
+          }
+          if (requestsResult?.value) {
+            setRequests(JSON.parse(requestsResult.value));
+          }
+          if (categoriesResult?.value) {
+            const parsed = JSON.parse(categoriesResult.value);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              setCategories(parsed);
+            }
           }
         }
       } catch (error) {
-        console.warn("Unable to restore saved inventory", error);
+        console.warn("Unable to restore data", error);
       }
     };
 
@@ -112,11 +142,13 @@ export default function BriechStorageSystem() {
 
   const saveData = async (newComponents, newUsageHistory) => {
     try {
-      await storage.set("briech-components", JSON.stringify(newComponents));
-      await storage.set(
-        "briech-usage-history",
-        JSON.stringify(newUsageHistory),
-      );
+      if (!API_BASE) {
+        await storage.set("briech-components", JSON.stringify(newComponents));
+        await storage.set(
+          "briech-usage-history",
+          JSON.stringify(newUsageHistory),
+        );
+      }
     } catch (error) {
       console.error("Error saving data:", error);
     }
@@ -125,15 +157,40 @@ export default function BriechStorageSystem() {
   const handleAddComponent = async () => {
     if (!newComponent.name || newComponent.quantity < 0) return;
 
-    const component = {
-      ...newComponent,
-      id: Date.now().toString(),
-      addedDate: new Date().toISOString(),
-    };
+    if (API_BASE) {
+      try {
+        const response = await fetch(`${API_BASE}/components`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: newComponent.name,
+            categoryId: null, // mapping of category name to ID can be added later
+            quantity: newComponent.quantity,
+            unit: newComponent.unit,
+            minStock: newComponent.minStock,
+            location: newComponent.location,
+            supplier: newComponent.supplier,
+            imageUrl: newComponent.image,
+          }),
+        });
+        if (response.ok) {
+          const created = await response.json();
+          setComponents((prev) => [created, ...prev]);
+        }
+      } catch (error) {
+        console.error("Error creating component via API", error);
+      }
+    } else {
+      const component = {
+        ...newComponent,
+        id: Date.now().toString(),
+        addedDate: new Date().toISOString(),
+      };
 
-    const updated = [...components, component];
-    setComponents(updated);
-    await saveData(updated, usageHistory);
+      const updated = [...components, component];
+      setComponents(updated);
+      await saveData(updated, usageHistory);
+    }
 
     setNewComponent({
       name: "",
@@ -185,9 +242,14 @@ export default function BriechStorageSystem() {
   };
 
   const handleDeleteComponent = async (id) => {
-    const updated = components.filter((component) => component.id !== id);
-    setComponents(updated);
-    await saveData(updated, usageHistory);
+    if (API_BASE) {
+      // No delete endpoint yet; just update UI for now
+      setComponents((prev) => prev.filter((component) => component.id !== id));
+    } else {
+      const updated = components.filter((component) => component.id !== id);
+      setComponents(updated);
+      await saveData(updated, usageHistory);
+    }
   };
 
   const handleAddCategory = async () => {
@@ -204,7 +266,15 @@ export default function BriechStorageSystem() {
     setNewCategoryName("");
     setNewComponent((prev) => ({ ...prev, category: name }));
     try {
-      await storage.set("briech-categories", JSON.stringify(updatedCategories));
+      if (API_BASE) {
+        await fetch(`${API_BASE}/categories`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name }),
+        });
+      } else {
+        await storage.set("briech-categories", JSON.stringify(updatedCategories));
+      }
     } catch (error) {
       console.error("Error saving categories:", error);
     }
@@ -220,26 +290,47 @@ export default function BriechStorageSystem() {
     }
 
     const component = components.find(
-      (component) => component.id === newRequest.componentId,
+      (componentItem) => String(componentItem.id) === String(newRequest.componentId),
     );
     if (!component) return;
 
-    const request = {
-      id: Date.now().toString(),
-      personnelName: newRequest.personnelName,
-      componentId: component.id,
-      componentName: component.name,
-      quantity: newRequest.quantity,
-      description: newRequest.description,
-      status: "pending", // pending -> approved -> returned
-      requestedAt: new Date().toISOString(),
-      approvedAt: null,
-      returnedAt: null,
-    };
+    if (API_BASE) {
+      try {
+        const response = await fetch(`${API_BASE}/requests`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            personnelName: newRequest.personnelName,
+            componentId: component.id,
+            quantity: newRequest.quantity,
+            description: newRequest.description,
+          }),
+        });
+        if (response.ok) {
+          const created = await response.json();
+          setRequests((prev) => [created, ...prev]);
+        }
+      } catch (error) {
+        console.error("Error creating request via API", error);
+      }
+    } else {
+      const request = {
+        id: Date.now().toString(),
+        personnelName: newRequest.personnelName,
+        componentId: component.id,
+        componentName: component.name,
+        quantity: newRequest.quantity,
+        description: newRequest.description,
+        status: "pending", // pending -> approved -> returned
+        requestedAt: new Date().toISOString(),
+        approvedAt: null,
+        returnedAt: null,
+      };
 
-    const updatedRequests = [request, ...requests];
-    setRequests(updatedRequests);
-    await storage.set("briech-requests", JSON.stringify(updatedRequests));
+      const updatedRequests = [request, ...requests];
+      setRequests(updatedRequests);
+      await storage.set("briech-requests", JSON.stringify(updatedRequests));
+    }
 
     setNewRequest({
       personnelName: "",
@@ -307,14 +398,41 @@ export default function BriechStorageSystem() {
     if (!targetRequest) return;
 
     // Adjust stock when request is approved (issue) and when item is returned
-    if (nextStatus === "approved") {
-      await recordUsageForRequest(targetRequest, "remove");
-    } else if (nextStatus === "returned") {
-      await recordUsageForRequest(targetRequest, "add");
-    }
+    if (!API_BASE) {
+      if (nextStatus === "approved") {
+        await recordUsageForRequest(targetRequest, "remove");
+      } else if (nextStatus === "returned") {
+        await recordUsageForRequest(targetRequest, "add");
+      }
 
-    setRequests(updatedRequests);
-    await storage.set("briech-requests", JSON.stringify(updatedRequests));
+      setRequests(updatedRequests);
+      await storage.set("briech-requests", JSON.stringify(updatedRequests));
+    } else {
+      try {
+        const response = await fetch(`${API_BASE}/requests/${id}/status`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            status:
+              nextStatus === "approved"
+                ? "APPROVED"
+                : nextStatus === "returned"
+                ? "RETURNED"
+                : "PENDING",
+          }),
+        });
+        if (response.ok) {
+          const serverRequest = await response.json();
+          setRequests((prev) =>
+            prev.map((request) =>
+              request.id === id ? serverRequest : request,
+            ),
+          );
+        }
+      } catch (error) {
+        console.error("Error updating request via API", error);
+      }
+    }
   };
 
   const handleImageUpload = (event) => {
