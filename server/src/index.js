@@ -287,7 +287,7 @@ app.post("/categories", async (req, res) => {
   }
 });
 
-// Delete component
+// Delete component (and related records)
 app.delete("/components/:id", async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -295,7 +295,11 @@ app.delete("/components/:id", async (req, res) => {
       return res.status(400).json({ error: "Invalid id" });
     }
 
+    // Remove dependent rows first to satisfy foreign keys
+    await query("DELETE FROM usage_history WHERE component_id = $1", [id]);
+    await query("DELETE FROM requests WHERE component_id = $1", [id]);
     await query("DELETE FROM components WHERE id = $1", [id]);
+
     res.status(204).end();
   } catch (error) {
     console.error("Delete component error", error);
