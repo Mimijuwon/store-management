@@ -287,6 +287,22 @@ app.post("/categories", async (req, res) => {
   }
 });
 
+// Delete component
+app.delete("/components/:id", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ error: "Invalid id" });
+    }
+
+    await query("DELETE FROM components WHERE id = $1", [id]);
+    res.status(204).end();
+  } catch (error) {
+    console.error("Delete component error", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 initDb()
   .then(() => {
     app.listen(PORT, () => {

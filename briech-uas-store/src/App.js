@@ -33,6 +33,43 @@ const storage = {
   },
 };
 
+const fromApiComponent = (raw) => ({
+  id: raw.id,
+  name: raw.name,
+  category: raw.category_name || raw.category || "",
+  quantity: raw.quantity ?? 0,
+  unit: raw.unit || "pcs",
+  minStock: raw.min_stock ?? raw.minStock ?? 0,
+  location: raw.location || "",
+  supplier: raw.supplier || "",
+  image: raw.image_url || raw.imageUrl || null,
+  addedDate: raw.created_at || raw.addedDate || null,
+});
+
+const fromApiRequest = (raw) => ({
+  id: raw.id,
+  personnelName: raw.personnel_name || raw.personnelName || "",
+  componentId: raw.component_id ?? raw.componentId,
+  componentName: raw.component_name || raw.componentName || "",
+  quantity: raw.quantity ?? 0,
+  description: raw.description || "",
+  status: (raw.status || "").toLowerCase() || "pending",
+  requestedAt: raw.requested_at || raw.requestedAt || null,
+  approvedAt: raw.approved_at || raw.approvedAt || null,
+  returnedAt: raw.returned_at || raw.returnedAt || null,
+});
+
+const fromApiUsage = (raw) => ({
+  id: raw.id,
+  componentId: raw.component_id ?? raw.componentId,
+  componentName: raw.component_name || raw.componentName || "",
+  quantity: raw.quantity ?? 0,
+  type: (raw.type || "").toLowerCase(),
+  project: raw.project || "",
+  notes: raw.notes || "",
+  date: raw.date || null,
+});
+
 export default function BriechStorageSystem() {
   const DEFAULT_CATEGORIES = [
     "Consumables",
@@ -96,13 +133,16 @@ export default function BriechStorageSystem() {
             ]);
 
           if (componentsRes.ok) {
-            setComponents(await componentsRes.json());
+            const data = await componentsRes.json();
+            setComponents(Array.isArray(data) ? data.map(fromApiComponent) : []);
           }
           if (usageRes.ok) {
-            setUsageHistory(await usageRes.json());
+            const data = await usageRes.json();
+            setUsageHistory(Array.isArray(data) ? data.map(fromApiUsage) : []);
           }
           if (requestsRes.ok) {
-            setRequests(await requestsRes.json());
+            const data = await requestsRes.json();
+            setRequests(Array.isArray(data) ? data.map(fromApiRequest) : []);
           }
           if (categoriesRes.ok) {
             const serverCategories = await categoriesRes.json();
@@ -175,7 +215,7 @@ export default function BriechStorageSystem() {
         });
         if (response.ok) {
           const created = await response.json();
-          setComponents((prev) => [created, ...prev]);
+          setComponents((prev) => [fromApiComponent(created), ...prev]);
         }
       } catch (error) {
         console.error("Error creating component via API", error);
@@ -243,8 +283,14 @@ export default function BriechStorageSystem() {
 
   const handleDeleteComponent = async (id) => {
     if (API_BASE) {
-      // No delete endpoint yet; just update UI for now
-      setComponents((prev) => prev.filter((component) => component.id !== id));
+      try {
+        await fetch(`${API_BASE}/components/${id}`, { method: "DELETE" });
+      } catch (error) {
+        console.error("Error deleting component via API", error);
+      }
+      setComponents((prev) =>
+        prev.filter((component) => String(component.id) !== String(id)),
+      );
     } else {
       const updated = components.filter((component) => component.id !== id);
       setComponents(updated);
@@ -308,7 +354,7 @@ export default function BriechStorageSystem() {
         });
         if (response.ok) {
           const created = await response.json();
-          setRequests((prev) => [created, ...prev]);
+          setRequests((prev) => [fromApiRequest(created), ...prev]);
         }
       } catch (error) {
         console.error("Error creating request via API", error);
