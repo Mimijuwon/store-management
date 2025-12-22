@@ -682,7 +682,7 @@ export default function BriechStorageSystem() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <div className="bg-blue-600 text-white px-4 py-4 sm:px-6 sm:py-6 shadow-lg">
+      <div className="bg-blue-600 text-white px-4 py-4 sm:px-6 sm:py-6 shadow-lg transition-colors duration-200">
         <div className="max-w-7xl mx-auto">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-3">
@@ -696,7 +696,7 @@ export default function BriechStorageSystem() {
             </div>
             <button
               onClick={() => setShowAddModal(true)}
-              className="bg-white text-blue-600 px-4 py-2 rounded-lg font-semibold hover:bg-blue-50 flex items-center gap-2"
+              className="bg-white text-blue-600 px-4 py-2 rounded-lg font-semibold hover:bg-blue-50 flex items-center gap-2 transition-colors duration-150"
             >
               <Plus size={20} />
               Add Component
@@ -724,7 +724,7 @@ export default function BriechStorageSystem() {
           <div className="flex border-b overflow-x-auto">
             <button
               onClick={() => setActiveTab("inventory")}
-              className={`px-6 py-3 font-semibold flex items-center gap-2 ${
+              className={`px-6 py-3 font-semibold flex items-center gap-2 transition-colors duration-150 ${
                 activeTab === "inventory"
                   ? "border-b-2 border-blue-600 text-blue-600"
                   : "text-gray-600 hover:text-gray-800"
@@ -735,7 +735,7 @@ export default function BriechStorageSystem() {
             </button>
             <button
               onClick={() => setActiveTab("usage")}
-              className={`px-6 py-3 font-semibold flex items-center gap-2 ${
+              className={`px-6 py-3 font-semibold flex items-center gap-2 transition-colors duration-150 ${
                 activeTab === "usage"
                   ? "border-b-2 border-blue-600 text-blue-600"
                   : "text-gray-600 hover:text-gray-800"
@@ -746,7 +746,7 @@ export default function BriechStorageSystem() {
             </button>
             <button
               onClick={() => setActiveTab("analytics")}
-              className={`px-6 py-3 font-semibold flex items-center gap-2 ${
+              className={`px-6 py-3 font-semibold flex items-center gap-2 transition-colors duration-150 ${
                 activeTab === "analytics"
                   ? "border-b-2 border-blue-600 text-blue-600"
                   : "text-gray-600 hover:text-gray-800"
@@ -757,7 +757,7 @@ export default function BriechStorageSystem() {
             </button>
             <button
               onClick={() => setActiveTab("requests")}
-              className={`px-6 py-3 font-semibold flex items-center gap-2 ${
+              className={`px-6 py-3 font-semibold flex items-center gap-2 transition-colors duration-150 ${
                 activeTab === "requests"
                   ? "border-b-2 border-blue-600 text-blue-600"
                   : "text-gray-600 hover:text-gray-800"
@@ -771,7 +771,7 @@ export default function BriechStorageSystem() {
 
         {activeTab === "inventory" && (
           <div className="space-y-4">
-            <div className="bg-white p-4 rounded-lg shadow">
+            <div className="bg-white p-4 rounded-lg shadow transition-shadow duration-150">
               <div className="flex items-center gap-2 mb-4 border-b pb-2">
                 <Search size={20} className="text-gray-400" />
                 <input
@@ -788,7 +788,7 @@ export default function BriechStorageSystem() {
               {filteredComponents.map((component) => (
                 <div
                   key={component.id}
-                  className="bg-white p-4 rounded-lg shadow hover:shadow-md transition-shadow"
+                  className="bg-white p-4 rounded-lg shadow hover:shadow-lg transition-transform transition-shadow duration-150 transform hover:-translate-y-0.5"
                 >
                   <div className="flex items-start justify-between gap-4">
                     {component.image && (
@@ -860,7 +860,7 @@ export default function BriechStorageSystem() {
                       )}
                       <button
                         onClick={() => handleDeleteComponent(component.id)}
-                        className="px-3 py-2 bg-red-600 text-white rounded hover:bg-red-700"
+                        className="px-3 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition-colors duration-150"
                       >
                         Delete
                       </button>
