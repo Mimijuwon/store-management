@@ -57,6 +57,7 @@ async function initDb() {
       supplier TEXT NOT NULL DEFAULT '',
       image_url TEXT NOT NULL DEFAULT '',
       category_id INTEGER REFERENCES categories(id),
+      category_name TEXT NOT NULL DEFAULT '',
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
@@ -82,7 +83,46 @@ async function initDb() {
       approved_at TIMESTAMPTZ,
       returned_at TIMESTAMPTZ
     );
+
+    CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      email TEXT UNIQUE NOT NULL,
+      role TEXT NOT NULL DEFAULT 'ENGINEER',
+      password_hash TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS audit_log (
+      id SERIAL PRIMARY KEY,
+      action TEXT NOT NULL,
+      entity_type TEXT NOT NULL,
+      entity_id INTEGER,
+      details JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    ALTER TABLE components
+      ADD COLUMN IF NOT EXISTS consumable BOOLEAN NOT NULL DEFAULT TRUE;
+
+    ALTER TABLE components
+      ADD COLUMN IF NOT EXISTS category_name TEXT NOT NULL DEFAULT '';
+
+    ALTER TABLE requests
+      ADD COLUMN IF NOT EXISTS expected_return_date TIMESTAMPTZ;
   `);
+}
+
+function requireAdmin(req, res, next) {
+  const configured = process.env.ADMIN_TOKEN;
+  if (!configured) {
+    return res.status(500).json({ error: "ADMIN_TOKEN not configured on server" });
+  }
+  const token = req.header("X-Admin-Token");
+  if (token !== configured) {
+    return res.status(403).json({ error: "Admin access required" });
+  }
+  return next();
 }
 
 app.get("/health", async (_req, res) => {
@@ -102,7 +142,10 @@ app.get("/health", async (_req, res) => {
 app.get("/components", async (_req, res) => {
   try {
     const result = await query(
-      `SELECT c.*, cat.id AS category_id, cat.name AS category_name
+      `SELECT
+         c.*,
+         cat.id   AS category_id,
+         COALESCE(c.category_name, cat.name, '') AS category_name
        FROM components c
        LEFT JOIN categories cat ON c.category_id = cat.id
        ORDER BY c.created_at DESC`,
@@ -119,6 +162,7 @@ app.post("/components", async (req, res) => {
     const {
       name,
       categoryId,
+      categoryName,
       quantity,
       unit,
       minStock,
@@ -131,24 +175,42 @@ app.post("/components", async (req, res) => {
       return res.status(400).json({ error: "Name is required" });
     }
 
+    // Log what we're receiving for debugging
+    console.log("POST /components - Received categoryName:", categoryName);
+
+    const consumable =
+      categoryName && /consumable/i.test(categoryName.toString());
+
+    // Ensure categoryName is a string (not null/undefined)
+    const finalCategoryName = categoryName ? String(categoryName).trim() : "";
+
     const result = await query(
       `INSERT INTO components
-        (name, category_id, quantity, unit, min_stock, location, supplier, image_url)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-       RETURNING *`,
+        (name, category_id, category_name, quantity, unit, min_stock, location, supplier, image_url, consumable)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       RETURNING id, name, category_id, category_name, quantity, unit, min_stock, location, supplier, image_url, consumable, created_at, updated_at`,
       [
         name,
         categoryId || null,
+        finalCategoryName,
         quantity ?? 0,
         unit || "pcs",
         minStock ?? 0,
         location || "",
         supplier || "",
         imageUrl || "",
+        consumable,
       ],
     );
 
-    res.status(201).json(result.rows[0]);
+    const saved = result.rows[0];
+    console.log("POST /components - Saved component with category_name:", saved.category_name);
+    
+    if (!saved.category_name && finalCategoryName) {
+      console.error("WARNING: category_name was not saved! Column may not exist in database.");
+    }
+
+    res.status(201).json(saved);
   } catch (error) {
     console.error("Create component error", error);
     res.status(500).json({ error: "Internal server error" });
@@ -159,7 +221,7 @@ app.post("/components", async (req, res) => {
 app.get("/requests", async (_req, res) => {
   try {
     const result = await query(
-      `SELECT r.*, c.name AS component_name, c.unit AS component_unit
+      `SELECT r.*, c.name AS component_name, c.unit AS component_unit, c.consumable
        FROM requests r
        JOIN components c ON r.component_id = c.id
        ORDER BY r.requested_at DESC`,
@@ -167,6 +229,22 @@ app.get("/requests", async (_req, res) => {
     res.json(result.rows);
   } catch (error) {
     console.error("Get requests error", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+app.get("/requests/outstanding", async (_req, res) => {
+  try {
+    const result = await query(
+      `SELECT r.*, c.name AS component_name, c.unit AS component_unit, c.consumable
+       FROM requests r
+       JOIN components c ON r.component_id = c.id
+       WHERE r.status = 'APPROVED' AND c.consumable = FALSE
+       ORDER BY r.requested_at DESC`,
+    );
+    res.json(result.rows);
+  } catch (error) {
+    console.error("Get outstanding requests error", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -179,6 +257,23 @@ app.post("/requests", async (req, res) => {
       return res
         .status(400)
         .json({ error: "personnelName, componentId and quantity are required" });
+    }
+
+    const componentRes = await query(
+      `SELECT id, name, quantity
+       FROM components
+       WHERE id = $1`,
+      [componentId],
+    );
+    if (componentRes.rowCount === 0) {
+      return res.status(404).json({ error: "Component not found" });
+    }
+    const comp = componentRes.rows[0];
+    if (comp.quantity <= 0 || comp.quantity < quantity) {
+      return res.status(400).json({
+        error: "Requested quantity exceeds available stock",
+        available: comp.quantity,
+      });
     }
 
     const result = await query(
@@ -196,7 +291,7 @@ app.post("/requests", async (req, res) => {
   }
 });
 
-app.patch("/requests/:id/status", async (req, res) => {
+app.patch("/requests/:id/status", requireAdmin, async (req, res) => {
   try {
     const id = Number(req.params.id);
     const { status } = req.body; // PENDING | APPROVED | RETURNED
@@ -205,30 +300,117 @@ app.patch("/requests/:id/status", async (req, res) => {
       return res.status(400).json({ error: "Invalid status" });
     }
 
-    const existing = await query("SELECT * FROM requests WHERE id = $1", [id]);
-    if (existing.rowCount === 0) {
-      return res.status(404).json({ error: "Request not found" });
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      const existing = await client.query(
+        `SELECT r.*, c.quantity AS component_quantity, c.consumable, c.id AS component_id
+         FROM requests r
+         JOIN components c ON r.component_id = c.id
+         WHERE r.id = $1
+         FOR UPDATE`,
+        [id],
+      );
+
+      if (existing.rowCount === 0) {
+        await client.query("ROLLBACK");
+        client.release();
+        return res.status(404).json({ error: "Request not found" });
+      }
+
+      const row = existing.rows[0];
+      const now = new Date();
+
+      if (status === "APPROVED") {
+        if (row.component_quantity < row.quantity) {
+          await client.query("ROLLBACK");
+          client.release();
+          return res.status(400).json({ error: "Insufficient stock" });
+        }
+
+        await client.query(
+          `UPDATE requests
+           SET status = 'APPROVED', approved_at = $1
+           WHERE id = $2`,
+          [now, id],
+        );
+
+        await client.query(
+          `UPDATE components
+           SET quantity = quantity - $1
+           WHERE id = $2`,
+          [row.quantity, row.component_id],
+        );
+
+        await client.query(
+          `INSERT INTO usage_history
+            (component_id, quantity, type, project, notes, date)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [
+            row.component_id,
+            -Math.abs(row.quantity),
+            "remove",
+            `Request by ${row.personnel_name}`,
+            row.description || "",
+            now,
+          ],
+        );
+      } else if (status === "RETURNED") {
+        await client.query(
+          `UPDATE requests
+           SET status = 'RETURNED', returned_at = $1
+           WHERE id = $2`,
+          [now, id],
+        );
+
+        if (row.consumable === false) {
+          await client.query(
+            `UPDATE components
+             SET quantity = quantity + $1
+             WHERE id = $2`,
+            [row.quantity, row.component_id],
+          );
+
+          await client.query(
+            `INSERT INTO usage_history
+              (component_id, quantity, type, project, notes, date)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [
+              row.component_id,
+              Math.abs(row.quantity),
+              "add",
+              `Return by ${row.personnel_name}`,
+              row.description || "",
+              now,
+            ],
+          );
+        }
+      } else if (status === "PENDING") {
+        await client.query(
+          `UPDATE requests
+           SET status = 'PENDING'
+           WHERE id = $1`,
+          [id],
+        );
+      }
+
+      const updated = await client.query(
+        `SELECT r.*, c.name AS component_name, c.unit AS component_unit, c.consumable
+         FROM requests r
+         JOIN components c ON r.component_id = c.id
+         WHERE r.id = $1`,
+        [id],
+      );
+
+      await client.query("COMMIT");
+      client.release();
+      res.json(updated.rows[0]);
+    } catch (error) {
+      await client.query("ROLLBACK");
+      client.release();
+      throw error;
     }
-
-    const now = new Date();
-    let dateColumn = null;
-    if (status === "APPROVED") dateColumn = "approved_at";
-    if (status === "RETURNED") dateColumn = "returned_at";
-
-    let sql = "UPDATE requests SET status = $1";
-    const params = [status];
-
-    if (dateColumn) {
-      sql += `, ${dateColumn} = $2`;
-      params.push(now);
-    }
-
-    sql += " WHERE id = $3 RETURNING *";
-    params.push(id);
-
-    const updated = await query(sql, params);
-
-    res.json(updated.rows[0]);
   } catch (error) {
     console.error("Update request status error", error);
     res.status(500).json({ error: "Internal server error" });
@@ -288,7 +470,7 @@ app.post("/categories", async (req, res) => {
 });
 
 // Delete component (and related records)
-app.delete("/components/:id", async (req, res) => {
+app.delete("/components/:id", requireAdmin, async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (Number.isNaN(id)) {
