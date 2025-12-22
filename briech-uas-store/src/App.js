@@ -79,7 +79,6 @@ const fromApiUsage = (raw) => ({
 export default function BriechStorageSystem() {
   const DEFAULT_CATEGORIES = [
     "Consumables",
-    "Non-consumables",
     "Batteries",
     "Tools",
     "Drone - DJI",
@@ -803,9 +802,6 @@ export default function BriechStorageSystem() {
                         <h3 className="text-xl font-bold text-gray-800">
                           {component.name}
                         </h3>
-                        <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-sm">
-                          {component.category}
-                        </span>
                         {component.quantity <= component.minStock && (
                           <span className="px-2 py-1 bg-yellow-100 text-yellow-700 rounded text-sm flex items-center gap-1">
                             <AlertTriangle size={14} />
@@ -814,6 +810,10 @@ export default function BriechStorageSystem() {
                         )}
                       </div>
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-gray-600">
+                        <div>
+                          <span className="font-semibold">Category:</span>{" "}
+                          {component.category || "N/A"}
+                        </div>
                         <div>
                           <span className="font-semibold">Quantity:</span>{" "}
                           {component.quantity} {component.unit}
