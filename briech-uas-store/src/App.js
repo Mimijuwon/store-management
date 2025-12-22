@@ -57,6 +57,12 @@ const fromApiRequest = (raw) => ({
   requestedAt: raw.requested_at || raw.requestedAt || null,
   approvedAt: raw.approved_at || raw.approvedAt || null,
   returnedAt: raw.returned_at || raw.returnedAt || null,
+  consumable:
+    typeof raw.consumable === "boolean"
+      ? raw.consumable
+      : raw.consumable === "false"
+      ? false
+      : true,
 });
 
 const fromApiUsage = (raw) => ({
@@ -546,12 +552,16 @@ export default function BriechStorageSystem() {
     const returned = requests.filter(
       (request) => request.status === "returned",
     ).length;
+    const outstanding = requests.filter(
+      (request) =>
+        request.status === "approved" && request.consumable === false,
+    ).length;
 
     return {
       pending,
       approved,
       returned,
-      outstanding: approved, // approved = issued but not yet returned
+      outstanding,
       total: requests.length,
     };
   }, [requests]);
