@@ -205,24 +205,33 @@ export default function BriechStorageSystem() {
 
     if (API_BASE) {
       try {
+        const payload = {
+          name: newComponent.name,
+          categoryId: null,
+          categoryName: newComponent.category,
+          quantity: newComponent.quantity,
+          unit: newComponent.unit,
+          minStock: newComponent.minStock,
+          location: newComponent.location,
+          supplier: newComponent.supplier,
+          imageUrl: newComponent.image,
+        };
+        console.log("Sending to API - categoryName:", payload.categoryName, "full payload:", payload);
+        
         const response = await fetch(`${API_BASE}/components`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: newComponent.name,
-            categoryId: null,
-            categoryName: newComponent.category,
-            quantity: newComponent.quantity,
-            unit: newComponent.unit,
-            minStock: newComponent.minStock,
-            location: newComponent.location,
-            supplier: newComponent.supplier,
-            imageUrl: newComponent.image,
-          }),
+          body: JSON.stringify(payload),
         });
         if (response.ok) {
           const created = await response.json();
-          setComponents((prev) => [fromApiComponent(created), ...prev]);
+          console.log("Received from API - category_name:", created.category_name, "full response:", created);
+          const normalized = fromApiComponent(created);
+          console.log("Normalized component - category:", normalized.category);
+          setComponents((prev) => [normalized, ...prev]);
+        } else {
+          const errorData = await response.json();
+          console.error("API error response:", errorData);
         }
       } catch (error) {
         console.error("Error creating component via API", error);
