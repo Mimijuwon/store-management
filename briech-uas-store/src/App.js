@@ -509,12 +509,40 @@ export default function BriechStorageSystem() {
           }),
         });
         if (response.ok) {
-          const serverRequest = await response.json();
+          const serverRequest = fromApiRequest(await response.json());
+
+          // Update requests immediately
           setRequests((prev) =>
             prev.map((request) =>
-              request.id === id ? serverRequest : request,
+              String(request.id) === String(id) ? serverRequest : request,
             ),
           );
+
+          // Refresh components and usage so quantities and history update without a full page reload
+          try {
+            const [compRes, usageRes] = await Promise.all([
+              fetch(`${API_BASE}/components`),
+              fetch(`${API_BASE}/usage`),
+            ]);
+            if (compRes.ok) {
+              const compData = await compRes.json();
+              setComponents(
+                Array.isArray(compData)
+                  ? compData.map(fromApiComponent)
+                  : [],
+              );
+            }
+            if (usageRes.ok) {
+              const usageData = await usageRes.json();
+              setUsageHistory(
+                Array.isArray(usageData)
+                  ? usageData.map(fromApiUsage)
+                  : [],
+              );
+            }
+          } catch (refreshError) {
+            console.error("Error refreshing data after status update", refreshError);
+          }
         }
       } catch (error) {
         console.error("Error updating request via API", error);
