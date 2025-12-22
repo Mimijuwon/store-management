@@ -284,7 +284,12 @@ export default function BriechStorageSystem() {
   const handleDeleteComponent = async (id) => {
     if (API_BASE) {
       try {
-        await fetch(`${API_BASE}/components/${id}`, { method: "DELETE" });
+        await fetch(`${API_BASE}/components/${id}`, {
+          method: "DELETE",
+          headers: {
+            "X-Admin-Token": process.env.REACT_APP_ADMIN_TOKEN || "",
+          },
+        });
       } catch (error) {
         console.error("Error deleting component via API", error);
       }
@@ -457,7 +462,10 @@ export default function BriechStorageSystem() {
       try {
         const response = await fetch(`${API_BASE}/requests/${id}/status`, {
           method: "PATCH",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "X-Admin-Token": process.env.REACT_APP_ADMIN_TOKEN || "",
+          },
           body: JSON.stringify({
             status:
               nextStatus === "approved"
