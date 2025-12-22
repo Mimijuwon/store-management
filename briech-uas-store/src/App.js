@@ -125,6 +125,7 @@ export default function BriechStorageSystem() {
   const [requestQuickFilter, setRequestQuickFilter] = useState("today"); // today | week | month | all
   const [requestStatusFilter, setRequestStatusFilter] = useState("all"); // all | pending | approved | returned
   const [newCategoryName, setNewCategoryName] = useState("");
+  const [requestError, setRequestError] = useState("");
 
   useEffect(() => {
     const loadData = async () => {
@@ -343,13 +344,29 @@ export default function BriechStorageSystem() {
       !newRequest.componentId ||
       newRequest.quantity <= 0
     ) {
+      setRequestError("Please fill all fields and use a quantity greater than zero.");
       return;
     }
 
     const component = components.find(
       (componentItem) => String(componentItem.id) === String(newRequest.componentId),
     );
-    if (!component) return;
+    if (!component) {
+      setRequestError("Selected item could not be found.");
+      return;
+    }
+
+    if (component.quantity <= 0) {
+      setRequestError("This item is currently out of stock and cannot be requested.");
+      return;
+    }
+
+    if (newRequest.quantity > component.quantity) {
+      setRequestError(
+        `Only ${component.quantity} ${component.unit || ""} available. Reduce the requested quantity.`,
+      );
+      return;
+    }
 
     if (API_BASE) {
       try {
@@ -366,9 +383,18 @@ export default function BriechStorageSystem() {
         if (response.ok) {
           const created = await response.json();
           setRequests((prev) => [fromApiRequest(created), ...prev]);
+          setRequestError("");
+        } else {
+          const err = await response.json().catch(() => null);
+          if (err?.error) {
+            setRequestError(err.error + (err.available !== undefined ? ` (Available: ${err.available})` : ""));
+          } else {
+            setRequestError("Unable to create request. Please try again.");
+          }
         }
       } catch (error) {
         console.error("Error creating request via API", error);
+        setRequestError("Network error while creating request. Please try again.");
       }
     } else {
       const request = {
@@ -387,6 +413,7 @@ export default function BriechStorageSystem() {
       const updatedRequests = [request, ...requests];
       setRequests(updatedRequests);
       await storage.set("briech-requests", JSON.stringify(updatedRequests));
+      setRequestError("");
     }
 
     setNewRequest({
@@ -1480,6 +1507,9 @@ export default function BriechStorageSystem() {
                 className="w-full border rounded p-2"
                 rows={3}
               />
+              {requestError && (
+                <p className="text-sm text-red-600">{requestError}</p>
+              )}
               <div className="flex gap-2">
                 <button
                   onClick={handleCreateRequest}
