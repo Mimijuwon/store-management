@@ -778,26 +778,30 @@ export default function BriechStorageSystem() {
                       </div>
                     </div>
                     <div className="flex gap-2 flex-col sm:flex-row">
-                      <button
-                        onClick={() => {
-                          setSelectedComponent(component);
-                          setShowUsageModal(true);
-                        }}
-                        className="px-3 py-2 bg-green-600 text-white rounded hover:bg-green-700 flex items-center gap-1 justify-center"
-                      >
-                        <Plus size={16} />
-                        Add
-                      </button>
-                      <button
-                        onClick={() => {
-                          setSelectedComponent(component);
-                          setShowUsageModal(true);
-                        }}
-                        className="px-3 py-2 bg-orange-600 text-white rounded hover:bg-orange-700 flex items-center gap-1 justify-center"
-                      >
-                        <Minus size={16} />
-                        Use
-                      </button>
+                      {!API_BASE && (
+                        <>
+                          <button
+                            onClick={() => {
+                              setSelectedComponent(component);
+                              setShowUsageModal(true);
+                            }}
+                            className="px-3 py-2 bg-green-600 text-white rounded hover:bg-green-700 flex items-center gap-1 justify-center"
+                          >
+                            <Plus size={16} />
+                            Add
+                          </button>
+                          <button
+                            onClick={() => {
+                              setSelectedComponent(component);
+                              setShowUsageModal(true);
+                            }}
+                            className="px-3 py-2 bg-orange-600 text-white rounded hover:bg-orange-700 flex items-center gap-1 justify-center"
+                          >
+                            <Minus size={16} />
+                            Use
+                          </button>
+                        </>
+                      )}
                       <button
                         onClick={() => handleDeleteComponent(component.id)}
                         className="px-3 py-2 bg-red-600 text-white rounded hover:bg-red-700"
