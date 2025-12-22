@@ -210,7 +210,8 @@ export default function BriechStorageSystem() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             name: newComponent.name,
-            categoryId: null, // mapping of category name to ID can be added later
+            categoryId: null,
+            categoryName: newComponent.category,
             quantity: newComponent.quantity,
             unit: newComponent.unit,
             minStock: newComponent.minStock,
