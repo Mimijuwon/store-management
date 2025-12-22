@@ -502,11 +502,17 @@ export default function BriechStorageSystem() {
       await storage.set("briech-requests", JSON.stringify(updatedRequests));
     } else {
       try {
+        const adminToken = process.env.REACT_APP_ADMIN_TOKEN || "";
+        if (!adminToken) {
+          alert("Admin token not configured. Please set REACT_APP_ADMIN_TOKEN in Vercel environment variables.");
+          return;
+        }
+
         const response = await fetch(`${API_BASE}/requests/${id}/status`, {
           method: "PATCH",
           headers: {
             "Content-Type": "application/json",
-            "X-Admin-Token": process.env.REACT_APP_ADMIN_TOKEN || "",
+            "X-Admin-Token": adminToken,
           },
           body: JSON.stringify({
             status:
@@ -549,12 +555,21 @@ export default function BriechStorageSystem() {
                   : [],
               );
             }
-          } catch (refreshError) {
+            } catch (refreshError) {
             console.error("Error refreshing data after status update", refreshError);
+          }
+        } else {
+          // Handle error responses
+          const errorData = await response.json().catch(() => ({ error: "Unknown error" }));
+          if (response.status === 403) {
+            alert(`Admin access required. Please set REACT_APP_ADMIN_TOKEN in Vercel environment variables.\n\nError: ${errorData.error || "Forbidden"}`);
+          } else {
+            alert(`Failed to update request status: ${errorData.error || "Unknown error"}`);
           }
         }
       } catch (error) {
         console.error("Error updating request via API", error);
+        alert(`Error updating request: ${error.message}`);
       }
     }
   };
