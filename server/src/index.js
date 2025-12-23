@@ -115,6 +115,31 @@ async function initDb() {
 
     ALTER TABLE requests
       ADD COLUMN IF NOT EXISTS expected_return_date TIMESTAMPTZ;
+
+    -- Drop NOT NULL constraints from legacy request columns (component_id, quantity, description)
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'requests' AND column_name = 'component_id' AND is_nullable = 'NO'
+      ) THEN
+        ALTER TABLE requests ALTER COLUMN component_id DROP NOT NULL;
+      END IF;
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'requests' AND column_name = 'quantity' AND is_nullable = 'NO'
+      ) THEN
+        ALTER TABLE requests ALTER COLUMN quantity DROP NOT NULL;
+        ALTER TABLE requests ALTER COLUMN quantity SET DEFAULT 0;
+      END IF;
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'requests' AND column_name = 'description' AND is_nullable = 'NO'
+      ) THEN
+        ALTER TABLE requests ALTER COLUMN description DROP NOT NULL;
+        ALTER TABLE requests ALTER COLUMN description SET DEFAULT '';
+      END IF;
+    END$$;
   `);
 }
 
