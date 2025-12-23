@@ -116,6 +116,9 @@ async function initDb() {
     ALTER TABLE requests
       ADD COLUMN IF NOT EXISTS expected_return_date TIMESTAMPTZ;
 
+    ALTER TABLE requests
+      ADD COLUMN IF NOT EXISTS face_image TEXT;
+
     -- Drop NOT NULL constraints from legacy request columns (component_id, quantity, description)
     DO $$
     BEGIN
@@ -315,7 +318,7 @@ app.get("/requests/outstanding", async (_req, res) => {
 
 app.post("/requests", async (req, res) => {
   try {
-    const { personnelName, items } = req.body;
+    const { personnelName, items, faceImage } = req.body;
 
     if (!personnelName || !Array.isArray(items) || items.length === 0) {
       return res
@@ -352,10 +355,10 @@ app.post("/requests", async (req, res) => {
     try {
       await client.query("BEGIN");
       const requestInsert = await client.query(
-        `INSERT INTO requests (personnel_name, status, requested_at)
-         VALUES ($1,'PENDING',NOW())
+        `INSERT INTO requests (personnel_name, status, requested_at, face_image)
+         VALUES ($1,'PENDING',NOW(),$2)
          RETURNING *`,
-        [personnelName],
+        [personnelName, faceImage || null],
       );
       const request = requestInsert.rows[0];
 
@@ -587,7 +590,7 @@ app.patch("/requests/:id/status", requireAdmin, async (req, res) => {
 app.patch("/requests/:id", async (req, res) => {
   try {
     const id = Number(req.params.id);
-    const { personnelName, items } = req.body;
+    const { personnelName, items, faceImage } = req.body;
 
     if (!personnelName || !Array.isArray(items) || items.length === 0) {
       return res
@@ -648,8 +651,11 @@ app.patch("/requests/:id", async (req, res) => {
       }
 
       await client.query(
-        `UPDATE requests SET personnel_name = $1 WHERE id = $2`,
-        [personnelName, id],
+        `UPDATE requests
+         SET personnel_name = $1,
+             face_image = COALESCE($3, face_image)
+         WHERE id = $2`,
+        [personnelName, id, faceImage || null],
       );
 
       await client.query(`DELETE FROM request_items WHERE request_id = $1`, [id]);

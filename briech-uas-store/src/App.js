@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -49,6 +49,7 @@ const fromApiComponent = (raw) => ({
 const fromApiRequest = (raw) => ({
   id: raw.id,
   personnelName: raw.personnel_name || raw.personnelName || "",
+  faceImage: raw.face_image || raw.faceImage || null,
   status: (raw.status || "").toLowerCase() || "pending",
   requestedAt: raw.requested_at || raw.requestedAt || null,
   approvedAt: raw.approved_at || raw.approvedAt || null,
@@ -132,6 +133,9 @@ export default function BriechStorageSystem() {
   const [newRequestItems, setNewRequestItems] = useState([
     { componentId: "", quantity: 1, description: "" },
   ]);
+  const [requestFaceImage, setRequestFaceImage] = useState(null);
+  const videoRef = useRef(null);
+  const [isCapturingFace, setIsCapturingFace] = useState(false);
   const [editingRequestId, setEditingRequestId] = useState(null);
   const [requestSearchTerm, setRequestSearchTerm] = useState("");
 
@@ -139,6 +143,42 @@ export default function BriechStorageSystem() {
   const [requestStatusFilter, setRequestStatusFilter] = useState("all"); // all | pending | approved | returned
   const [newCategoryName, setNewCategoryName] = useState("");
   const [requestError, setRequestError] = useState("");
+
+  const startFaceCapture = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+        setIsCapturingFace(true);
+      }
+    } catch (error) {
+      console.error("Unable to access camera", error);
+      setRequestError("Unable to access camera. Please check permissions.");
+    }
+  };
+
+  const stopFaceCapture = () => {
+    if (videoRef.current && videoRef.current.srcObject) {
+      const tracks = videoRef.current.srcObject.getTracks();
+      tracks.forEach((track) => track.stop());
+      videoRef.current.srcObject = null;
+    }
+    setIsCapturingFace(false);
+  };
+
+  const captureFaceImage = () => {
+    if (!videoRef.current) return;
+    const video = videoRef.current;
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth || 320;
+    canvas.height = video.videoHeight || 240;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL("image/jpeg");
+    setRequestFaceImage(dataUrl);
+    stopFaceCapture();
+  };
 
   useEffect(() => {
     const loadData = async () => {
@@ -367,6 +407,11 @@ export default function BriechStorageSystem() {
       return;
     }
 
+    if (!requestFaceImage) {
+      setRequestError("Please capture your face before submitting.");
+      return;
+    }
+
     const items = newRequestItems.map((item) => ({
       componentId: item.componentId,
       quantity: Number(item.quantity) || 0,
@@ -414,6 +459,7 @@ export default function BriechStorageSystem() {
           body: JSON.stringify({
             personnelName: newRequest.personnelName,
             items: items,
+            faceImage: requestFaceImage,
           }),
         });
         if (response.ok) {
@@ -460,6 +506,7 @@ export default function BriechStorageSystem() {
         const request = {
           id: Date.now().toString(),
           personnelName: newRequest.personnelName,
+          faceImage: requestFaceImage,
           items: newRequestItems.map((i) => ({
             ...i,
             componentName:
@@ -478,6 +525,7 @@ export default function BriechStorageSystem() {
       setRequestError("");
     }
 
+    setRequestFaceImage(null);
     setNewRequest({
       personnelName: "",
     });
@@ -1254,6 +1302,7 @@ export default function BriechStorageSystem() {
                     setNewRequest({ personnelName: "" });
                     setNewRequestItems([{ componentId: "", quantity: 1, description: "" }]);
                     setRequestError("");
+                    setRequestFaceImage(null);
                     setShowRequestModal(true);
                   }}
                   className="bg-blue-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-blue-700 flex items-center gap-2 self-start sm:self-auto"
@@ -1289,14 +1338,25 @@ export default function BriechStorageSystem() {
                   {filteredRequests.map((request) => (
                     <tr key={request.id} className="hover:bg-gray-50">
                       <td className="px-3 py-2">
-                        <div className="font-semibold">
-                          {request.personnelName}
-                        </div>
-                        {request.description && (
-                          <div className="text-xs text-gray-500">
-                            {request.description}
+                        <div className="flex items-center gap-3">
+                          {request.faceImage && (
+                            <img
+                              src={request.faceImage}
+                              alt={request.personnelName}
+                              className="w-10 h-10 rounded-full object-cover border"
+                            />
+                          )}
+                          <div>
+                            <div className="font-semibold">
+                              {request.personnelName}
+                            </div>
+                            {request.description && (
+                              <div className="text-xs text-gray-500">
+                                {request.description}
+                              </div>
+                            )}
                           </div>
-                        )}
+                        </div>
                       </td>
                       <td className="px-3 py-2 text-sm text-gray-700 space-y-1">
                         {request.items && request.items.length > 0 ? (
@@ -1651,6 +1711,60 @@ export default function BriechStorageSystem() {
                 className="w-full border rounded p-2"
               />
 
+              <div className="space-y-2">
+                <label className="block text-sm font-semibold">
+                  Face Capture
+                </label>
+                {requestFaceImage && (
+                  <div className="mb-2">
+                    <img
+                      src={requestFaceImage}
+                      alt="Captured face"
+                      className="w-32 h-32 object-cover rounded-full border mx-auto"
+                    />
+                  </div>
+                )}
+                {isCapturingFace && (
+                  <div className="mb-2">
+                    <video
+                      ref={videoRef}
+                      className="w-full rounded-lg border"
+                      autoPlay
+                      playsInline
+                    />
+                  </div>
+                )}
+                <div className="flex flex-wrap gap-2">
+                  {!isCapturingFace && (
+                    <button
+                      type="button"
+                      onClick={startFaceCapture}
+                      className="px-3 py-1 bg-gray-100 text-gray-800 rounded text-xs font-semibold hover:bg-gray-200"
+                    >
+                      {requestFaceImage ? "Retake Face Capture" : "Start Camera"}
+                    </button>
+                  )}
+                  {isCapturingFace && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={captureFaceImage}
+                        className="px-3 py-1 bg-blue-600 text-white rounded text-xs font-semibold hover:bg-blue-700"
+                      >
+                        Capture
+                      </button>
+                      <button
+                        type="button"
+                        onClick={stopFaceCapture}
+                        className="px-3 py-1 bg-gray-100 text-gray-800 rounded text-xs font-semibold hover:bg-gray-200"
+                      >
+                        Cancel Camera
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <h4 className="text-sm font-semibold">Items</h4>
@@ -1738,6 +1852,7 @@ export default function BriechStorageSystem() {
                     setRequestError("");
                     setNewRequest({ personnelName: "" });
                     setNewRequestItems([{ componentId: "", quantity: 1, description: "" }]);
+                    setRequestFaceImage(null);
                   }}
                   className="flex-1 bg-gray-300 text-gray-700 py-2 rounded font-semibold hover:bg-gray-400"
                 >
