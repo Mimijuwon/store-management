@@ -1001,62 +1001,161 @@ export default function BriechStorageSystem() {
             )}
 
             <div className="space-y-4">
-              <h3 className="text-lg font-semibold">Your Requests</h3>
-              <div className="bg-gray-50 rounded-lg p-4">
-                {requests.length === 0 ? (
-                  <p className="text-gray-500 text-center py-8">
-                    No requests yet. Click "New Request" above to create one.
-                  </p>
-                ) : (
-                  <div className="space-y-3">
-                    {requests.map((request) => (
-                      <div key={request.id} className="bg-white p-4 rounded-lg border">
-                        <div className="flex items-center gap-3 mb-2">
-                          {request.faceImage && (
-                            <img
-                              src={request.faceImage}
-                              alt={request.personnelName}
-                              className="w-12 h-12 rounded-full object-cover border"
-                            />
-                          )}
-                          <div className="flex-1">
-                            <div className="font-semibold">{request.personnelName}</div>
-                            <div className="text-xs text-gray-500">
-                              {new Date(request.requestedAt).toLocaleString()}
-                            </div>
-                          </div>
-                          <span
-                            className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                              request.status === "pending"
-                                ? "bg-yellow-100 text-yellow-700"
-                                : request.status === "approved"
-                                ? "bg-blue-100 text-blue-700"
-                                : "bg-green-100 text-green-700"
-                            }`}
-                          >
-                            {request.status === "pending" && "Pending"}
-                            {request.status === "approved" && "Approved"}
-                            {request.status === "returned" && "Returned"}
-                          </span>
+              <div className="flex items-center justify-between">
+                <h3 className="text-xl font-bold text-gray-800">Recent Requests</h3>
+                <span className="text-sm text-gray-500 bg-gray-100 px-3 py-1 rounded-full">
+                  Last 3 Days
+                </span>
+              </div>
+              
+              {(() => {
+                // Filter requests from last 3 days
+                const threeDaysAgo = new Date();
+                threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+                threeDaysAgo.setHours(0, 0, 0, 0);
+                
+                const recentRequests = requests
+                  .filter((request) => {
+                    if (!request.requestedAt) return false;
+                    const requestDate = new Date(request.requestedAt);
+                    return requestDate >= threeDaysAgo;
+                  })
+                  .sort((a, b) => {
+                    const dateA = new Date(a.requestedAt || 0);
+                    const dateB = new Date(b.requestedAt || 0);
+                    return dateB - dateA; // Newest first
+                  });
+
+                // Group by date
+                const groupedByDate = recentRequests.reduce((acc, request) => {
+                  const date = new Date(request.requestedAt);
+                  const dateKey = date.toLocaleDateString('en-US', { 
+                    weekday: 'long', 
+                    year: 'numeric', 
+                    month: 'long', 
+                    day: 'numeric' 
+                  });
+                  
+                  if (!acc[dateKey]) {
+                    acc[dateKey] = [];
+                  }
+                  acc[dateKey].push(request);
+                  return acc;
+                }, {});
+
+                if (recentRequests.length === 0) {
+                  return (
+                    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-8 text-center">
+                      <div className="text-gray-400 mb-2">
+                        <ClipboardList size={48} className="mx-auto" />
+                      </div>
+                      <p className="text-gray-500 font-medium">
+                        No requests in the last 3 days
+                      </p>
+                      <p className="text-sm text-gray-400 mt-1">
+                        Click "New Request" above to create one
+                      </p>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="space-y-6">
+                    {Object.entries(groupedByDate).map(([dateKey, dateRequests]) => (
+                      <div key={dateKey} className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+                        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 px-6 py-3 border-b border-gray-200">
+                          <h4 className="text-sm font-bold text-gray-700 uppercase tracking-wide">
+                            {dateKey}
+                          </h4>
+                          <p className="text-xs text-gray-500 mt-1">
+                            {dateRequests.length} request{dateRequests.length !== 1 ? 's' : ''}
+                          </p>
                         </div>
-                        <div className="mt-2 text-sm text-gray-600">
-                          {request.items && request.items.length > 0 && (
-                            <div>
-                              <strong>Items:</strong>{" "}
-                              {request.items.map((item, idx) => (
-                                <span key={idx}>
-                                  {item.componentName} ({item.quantity} {item.unit})
-                                  {idx < request.items.length - 1 ? ", " : ""}
-                                </span>
-                              ))}
+                        <div className="divide-y divide-gray-100">
+                          {dateRequests.map((request) => (
+                            <div key={request.id} className="p-5 hover:bg-gray-50 transition-colors">
+                              <div className="flex items-start gap-4">
+                                {request.faceImage && (
+                                  <div className="flex-shrink-0">
+                                    <img
+                                      src={request.faceImage}
+                                      alt={request.personnelName}
+                                      className="w-14 h-14 rounded-full object-cover border-2 border-gray-200 shadow-sm"
+                                    />
+                                  </div>
+                                )}
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-start justify-between gap-4 mb-2">
+                                    <div>
+                                      <h5 className="font-semibold text-gray-900 text-base">
+                                        {request.personnelName}
+                                      </h5>
+                                      <p className="text-xs text-gray-500 mt-1">
+                                        {new Date(request.requestedAt).toLocaleTimeString('en-US', {
+                                          hour: '2-digit',
+                                          minute: '2-digit'
+                                        })}
+                                      </p>
+                                    </div>
+                                    <span
+                                      className={`px-3 py-1.5 rounded-full text-xs font-bold uppercase tracking-wide flex-shrink-0 ${
+                                        request.status === "pending"
+                                          ? "bg-yellow-100 text-yellow-800 border border-yellow-200"
+                                          : request.status === "approved"
+                                          ? "bg-blue-100 text-blue-800 border border-blue-200"
+                                          : "bg-green-100 text-green-800 border border-green-200"
+                                      }`}
+                                    >
+                                      {request.status === "pending" && "⏳ Pending"}
+                                      {request.status === "approved" && "✓ Approved"}
+                                      {request.status === "returned" && "↩ Returned"}
+                                    </span>
+                                  </div>
+                                  
+                                  {request.items && request.items.length > 0 && (
+                                    <div className="mt-3 bg-gray-50 rounded-lg p-3 border border-gray-200">
+                                      <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">
+                                        Requested Items
+                                      </p>
+                                      <div className="grid gap-2">
+                                        {request.items.map((item, idx) => (
+                                          <div
+                                            key={idx}
+                                            className="flex items-center justify-between bg-white rounded px-3 py-2 border border-gray-200"
+                                          >
+                                            <div className="flex-1">
+                                              <span className="text-sm font-medium text-gray-900">
+                                                {item.componentName}
+                                              </span>
+                                              {item.description && (
+                                                <p className="text-xs text-gray-500 mt-0.5">
+                                                  {item.description}
+                                                </p>
+                                              )}
+                                            </div>
+                                            <div className="ml-4 text-right">
+                                              <span className="text-sm font-bold text-gray-700">
+                                                {item.quantity}
+                                              </span>
+                                              <span className="text-xs text-gray-500 ml-1">
+                                                {item.unit || 'pcs'}
+                                              </span>
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
                             </div>
-                          )}
+                          ))}
                         </div>
                       </div>
                     ))}
                   </div>
-                )}
-              </div>
+                );
+              })()}
             </div>
           </div>
         </div>
