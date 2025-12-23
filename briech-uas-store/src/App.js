@@ -145,6 +145,15 @@ export default function BriechStorageSystem() {
   const [requestStatusFilter, setRequestStatusFilter] = useState("all"); // all | pending | approved | returned
   const [newCategoryName, setNewCategoryName] = useState("");
   const [requestError, setRequestError] = useState("");
+  
+  // Simple admin login state
+  const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(() => {
+    const saved = localStorage.getItem("briech-admin-logged-in");
+    return saved === "true";
+  });
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
+  const [showLoginModal, setShowLoginModal] = useState(false);
 
   const startFaceCapture = async () => {
     setIsLoadingCamera(true);
@@ -240,6 +249,32 @@ export default function BriechStorageSystem() {
       console.error("Error capturing image:", error);
       setRequestError("Failed to capture image. Please try again.");
     }
+  };
+
+  // Simple admin login/logout
+  const handleAdminLogin = (e) => {
+    e.preventDefault();
+    setLoginError("");
+    
+    // Simple password check (you can change this password)
+    const ADMIN_PASSWORD = process.env.REACT_APP_ADMIN_PASSWORD || "admin123";
+    
+    if (loginPassword === ADMIN_PASSWORD) {
+      setIsAdminLoggedIn(true);
+      localStorage.setItem("briech-admin-logged-in", "true");
+      setLoginPassword("");
+      setLoginError("");
+      setShowLoginModal(false);
+      setActiveTab("inventory");
+    } else {
+      setLoginError("Incorrect password. Please try again.");
+    }
+  };
+
+  const handleAdminLogout = () => {
+    setIsAdminLoggedIn(false);
+    localStorage.removeItem("briech-admin-logged-in");
+    stopFaceCapture();
   };
 
   // Cleanup on unmount
@@ -916,6 +951,359 @@ export default function BriechStorageSystem() {
     setShowRequestModal(true);
   };
 
+  // Engineer-only view (no login required)
+  if (!isAdminLoggedIn) {
+    return (
+      <div className="min-h-screen bg-gray-50">
+        <div className="bg-blue-600 text-white px-4 py-4 sm:px-6 sm:py-6 shadow-lg">
+          <div className="max-w-4xl mx-auto">
+            <div className="flex items-center gap-3 mb-4">
+              <Package size={32} />
+              <div>
+                <h1 className="text-2xl font-bold">Component Request</h1>
+                <p className="text-blue-100 text-sm">
+                  Request components from the store
+                </p>
+              </div>
+            </div>
+            <div className="bg-white bg-opacity-10 rounded-lg p-4">
+              <p className="text-sm text-blue-100">
+                Store Keeper? <button onClick={() => setShowLoginModal(true)} className="underline font-semibold">Login here</button>
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="max-w-4xl mx-auto px-4 py-8">
+          <div className="bg-white rounded-lg shadow-lg p-6">
+            <h2 className="text-2xl font-bold mb-6">Make a Request</h2>
+            
+            <button
+              onClick={() => {
+                stopFaceCapture();
+                setEditingRequestId(null);
+                setNewRequest({ personnelName: "" });
+                setNewRequestItems([{ componentId: "", quantity: 1, description: "" }]);
+                setRequestError("");
+                setRequestFaceImage(null);
+                setShowRequestModal(true);
+              }}
+              className="w-full bg-blue-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-blue-700 flex items-center justify-center gap-2 mb-6"
+            >
+              <Plus size={20} />
+              New Request
+            </button>
+
+            {requestError && (
+              <div className="mb-4 p-3 bg-red-100 text-red-700 rounded-lg text-sm">
+                {requestError}
+              </div>
+            )}
+
+            <div className="space-y-4">
+              <h3 className="text-lg font-semibold">Your Requests</h3>
+              <div className="bg-gray-50 rounded-lg p-4">
+                {requests.length === 0 ? (
+                  <p className="text-gray-500 text-center py-8">
+                    No requests yet. Click "New Request" above to create one.
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    {requests.map((request) => (
+                      <div key={request.id} className="bg-white p-4 rounded-lg border">
+                        <div className="flex items-center gap-3 mb-2">
+                          {request.faceImage && (
+                            <img
+                              src={request.faceImage}
+                              alt={request.personnelName}
+                              className="w-12 h-12 rounded-full object-cover border"
+                            />
+                          )}
+                          <div className="flex-1">
+                            <div className="font-semibold">{request.personnelName}</div>
+                            <div className="text-xs text-gray-500">
+                              {new Date(request.requestedAt).toLocaleString()}
+                            </div>
+                          </div>
+                          <span
+                            className={`px-3 py-1 rounded-full text-xs font-semibold ${
+                              request.status === "pending"
+                                ? "bg-yellow-100 text-yellow-700"
+                                : request.status === "approved"
+                                ? "bg-blue-100 text-blue-700"
+                                : "bg-green-100 text-green-700"
+                            }`}
+                          >
+                            {request.status === "pending" && "Pending"}
+                            {request.status === "approved" && "Approved"}
+                            {request.status === "returned" && "Returned"}
+                          </span>
+                        </div>
+                        <div className="mt-2 text-sm text-gray-600">
+                          {request.items && request.items.length > 0 && (
+                            <div>
+                              <strong>Items:</strong>{" "}
+                              {request.items.map((item, idx) => (
+                                <span key={idx}>
+                                  {item.componentName} ({item.quantity} {item.unit})
+                                  {idx < request.items.length - 1 ? ", " : ""}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Request Modal for Engineers */}
+        {showRequestModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-lg p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
+              <h2 className="text-2xl font-bold mb-4">New Request</h2>
+              <div className="space-y-4">
+                <input
+                  type="text"
+                  placeholder="Your Name"
+                  value={newRequest.personnelName}
+                  onChange={(event) =>
+                    setNewRequest((prev) => ({
+                      ...prev,
+                      personnelName: event.target.value,
+                    }))
+                  }
+                  className="w-full border rounded p-2"
+                />
+
+                <div className="space-y-2">
+                  <label className="block text-sm font-semibold">
+                    Face Capture {requestFaceImage && <span className="text-green-600">✓</span>}
+                  </label>
+                  
+                  {requestFaceImage && !isCapturingFace && (
+                    <div className="mb-2 flex flex-col items-center">
+                      <img
+                        src={requestFaceImage}
+                        alt="Captured face"
+                        className="w-32 h-32 object-cover rounded-full border-2 border-green-500 shadow-md"
+                      />
+                      <p className="text-xs text-gray-500 mt-2">Face captured successfully</p>
+                    </div>
+                  )}
+                  
+                  {isCapturingFace && (
+                    <div className="mb-2 relative bg-gray-900 rounded-lg overflow-hidden">
+                      {isLoadingCamera && (
+                        <div className="absolute inset-0 flex items-center justify-center bg-gray-900 bg-opacity-75 z-10">
+                          <div className="text-white text-sm">Starting camera...</div>
+                        </div>
+                      )}
+                      <video
+                        ref={videoRef}
+                        className="w-full h-auto max-h-64 object-cover"
+                        autoPlay
+                        playsInline
+                        muted
+                      />
+                      <div className="absolute bottom-2 left-0 right-0 flex justify-center gap-2">
+                        <button
+                          type="button"
+                          onClick={captureFaceImage}
+                          disabled={isLoadingCamera}
+                          className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg"
+                        >
+                          📷 Capture
+                        </button>
+                        <button
+                          type="button"
+                          onClick={stopFaceCapture}
+                          disabled={isLoadingCamera}
+                          className="px-4 py-2 bg-gray-700 text-white rounded-lg text-sm font-semibold hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {!isCapturingFace && (
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={startFaceCapture}
+                        disabled={isLoadingCamera}
+                        className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                      >
+                        {isLoadingCamera ? (
+                          <>⏳ Starting...</>
+                        ) : requestFaceImage ? (
+                          <>🔄 Retake Face Capture</>
+                        ) : (
+                          <>📷 Start Camera</>
+                        )}
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-sm font-semibold">Items</h4>
+                    <button
+                      type="button"
+                      onClick={addRequestItemRow}
+                      className="text-sm text-blue-600 hover:text-blue-700 font-semibold"
+                    >
+                      + Add item
+                    </button>
+                  </div>
+
+                  {newRequestItems.map((item, idx) => (
+                    <div
+                      key={idx}
+                      className="border rounded p-3 space-y-2 bg-gray-50"
+                    >
+                      <div className="flex gap-2 items-center">
+                        <select
+                          value={item.componentId}
+                          onChange={(event) =>
+                            updateRequestItemRow(idx, "componentId", event.target.value)
+                          }
+                          className="w-full border rounded p-2"
+                        >
+                          <option value="">Select Item</option>
+                          {components.map((component) => (
+                            <option key={component.id} value={component.id}>
+                              {component.name} ({component.quantity} {component.unit} in stock)
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          type="number"
+                          min={1}
+                          value={item.quantity}
+                          onChange={(event) =>
+                            updateRequestItemRow(
+                              idx,
+                              "quantity",
+                              parseInt(event.target.value, 10) || 1,
+                            )
+                          }
+                          className="w-24 border rounded p-2"
+                        />
+                      </div>
+                      <textarea
+                        placeholder="Item description (optional)"
+                        value={item.description}
+                        onChange={(event) =>
+                          updateRequestItemRow(idx, "description", event.target.value)
+                        }
+                        className="w-full border rounded p-2"
+                        rows={2}
+                      />
+                      {newRequestItems.length > 1 && (
+                        <div className="text-right">
+                          <button
+                            type="button"
+                            onClick={() => removeRequestItemRow(idx)}
+                            className="text-xs text-red-600 hover:text-red-700"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                {requestError && (
+                  <p className="text-sm text-red-600">{requestError}</p>
+                )}
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleCreateRequest}
+                    className="flex-1 bg-blue-600 text-white py-2 rounded font-semibold hover:bg-blue-700"
+                  >
+                    Submit Request
+                  </button>
+                  <button
+                    onClick={() => {
+                      stopFaceCapture();
+                      setShowRequestModal(false);
+                      setEditingRequestId(null);
+                      setRequestError("");
+                      setNewRequest({ personnelName: "" });
+                      setNewRequestItems([{ componentId: "", quantity: 1, description: "" }]);
+                      setRequestFaceImage(null);
+                    }}
+                    className="flex-1 bg-gray-300 text-gray-700 py-2 rounded font-semibold hover:bg-gray-400"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Login Modal for Store Keeper */}
+        {showLoginModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-lg p-6 max-w-md w-full">
+              <h2 className="text-2xl font-bold mb-4">Store Keeper Login</h2>
+              <form onSubmit={handleAdminLogin} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-semibold mb-2">
+                    Password
+                  </label>
+                  <input
+                    type="password"
+                    value={loginPassword}
+                    onChange={(e) => {
+                      setLoginPassword(e.target.value);
+                      setLoginError("");
+                    }}
+                    placeholder="Enter admin password"
+                    className="w-full border rounded p-2"
+                    autoFocus
+                  />
+                </div>
+                {loginError && (
+                  <p className="text-sm text-red-600">{loginError}</p>
+                )}
+                <div className="flex gap-2">
+                  <button
+                    type="submit"
+                    className="flex-1 bg-blue-600 text-white py-2 rounded font-semibold hover:bg-blue-700"
+                  >
+                    Login
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowLoginModal(false);
+                      setLoginPassword("");
+                      setLoginError("");
+                    }}
+                    className="flex-1 bg-gray-300 text-gray-700 py-2 rounded font-semibold hover:bg-gray-400"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Admin view (full app with login)
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="bg-blue-600 text-white px-4 py-4 sm:px-6 sm:py-6 shadow-lg transition-colors duration-200">
@@ -930,14 +1318,22 @@ export default function BriechStorageSystem() {
                 </p>
               </div>
             </div>
-            <button
-              onClick={() => setShowAddModal(true)}
-              className="bg-white text-blue-600 px-4 py-2 rounded-lg font-semibold hover:bg-blue-50 flex items-center gap-2 transition-colors duration-150"
-            >
-              <Plus size={20} />
-              Add Component
-            </button>
-    </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleAdminLogout}
+                className="bg-white bg-opacity-20 text-white px-4 py-2 rounded-lg font-semibold hover:bg-opacity-30 transition-colors duration-150"
+              >
+                Logout
+              </button>
+              <button
+                onClick={() => setShowAddModal(true)}
+                className="bg-white text-blue-600 px-4 py-2 rounded-lg font-semibold hover:bg-blue-50 flex items-center gap-2 transition-colors duration-150"
+              >
+                <Plus size={20} />
+                Add Component
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
