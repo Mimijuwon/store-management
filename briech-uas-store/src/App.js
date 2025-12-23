@@ -458,20 +458,33 @@ export default function BriechStorageSystem() {
   };
 
   const handleDeleteComponent = async (id) => {
+    if (!window.confirm("Are you sure you want to delete this component? This action cannot be undone.")) {
+      return;
+    }
+
     if (API_BASE) {
       try {
-        await fetch(`${API_BASE}/components/${id}`, {
+        const response = await fetch(`${API_BASE}/components/${id}`, {
           method: "DELETE",
           headers: {
             "X-Admin-Token": process.env.REACT_APP_ADMIN_TOKEN || "",
           },
         });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({ error: "Failed to delete component" }));
+          alert(`Error: ${errorData.error || "Failed to delete component. Please try again."}`);
+          return;
+        }
+
+        // Only remove from UI if deletion was successful
+        setComponents((prev) =>
+          prev.filter((component) => String(component.id) !== String(id)),
+        );
       } catch (error) {
         console.error("Error deleting component via API", error);
+        alert("Network error while deleting component. Please check your connection and try again.");
       }
-      setComponents((prev) =>
-        prev.filter((component) => String(component.id) !== String(id)),
-      );
     } else {
       const updated = components.filter((component) => component.id !== id);
       setComponents(updated);

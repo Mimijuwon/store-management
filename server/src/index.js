@@ -767,15 +767,22 @@ app.delete("/components/:id", requireAdmin, async (req, res) => {
       return res.status(400).json({ error: "Invalid id" });
     }
 
+    // Check if component exists
+    const componentCheck = await query("SELECT id FROM components WHERE id = $1", [id]);
+    if (componentCheck.rowCount === 0) {
+      return res.status(404).json({ error: "Component not found" });
+    }
+
     // Remove dependent rows first to satisfy foreign keys
+    // Order matters: delete from child tables first
     await query("DELETE FROM usage_history WHERE component_id = $1", [id]);
-    await query("DELETE FROM requests WHERE component_id = $1", [id]);
+    await query("DELETE FROM request_items WHERE component_id = $1", [id]);
     await query("DELETE FROM components WHERE id = $1", [id]);
 
     res.status(204).end();
   } catch (error) {
     console.error("Delete component error", error);
-    res.status(500).json({ error: "Internal server error" });
+    res.status(500).json({ error: "Internal server error", details: error.message });
   }
 });
 
