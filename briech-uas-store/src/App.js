@@ -135,7 +135,9 @@ export default function BriechStorageSystem() {
   ]);
   const [requestFaceImage, setRequestFaceImage] = useState(null);
   const videoRef = useRef(null);
+  const streamRef = useRef(null);
   const [isCapturingFace, setIsCapturingFace] = useState(false);
+  const [isLoadingCamera, setIsLoadingCamera] = useState(false);
   const [editingRequestId, setEditingRequestId] = useState(null);
   const [requestSearchTerm, setRequestSearchTerm] = useState("");
 
@@ -145,40 +147,109 @@ export default function BriechStorageSystem() {
   const [requestError, setRequestError] = useState("");
 
   const startFaceCapture = async () => {
+    setIsLoadingCamera(true);
+    setRequestError("");
+    
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-        setIsCapturingFace(true);
+      // Stop any existing stream first
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
       }
+
+      // Request camera access
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { 
+          facingMode: 'user',
+          width: { ideal: 640 },
+          height: { ideal: 480 }
+        } 
+      });
+      
+      streamRef.current = stream;
+      
+      // Wait a bit for video element to be ready, then set stream
+      setIsCapturingFace(true);
+      
+      // Use setTimeout to ensure video element is rendered
+      setTimeout(() => {
+        if (videoRef.current && streamRef.current) {
+          videoRef.current.srcObject = streamRef.current;
+          videoRef.current.play().catch((err) => {
+            console.error("Video play error:", err);
+            setRequestError("Unable to start video. Please try again.");
+            stopFaceCapture();
+          });
+        }
+        setIsLoadingCamera(false);
+      }, 100);
+      
     } catch (error) {
       console.error("Unable to access camera", error);
-      setRequestError("Unable to access camera. Please check permissions.");
+      setIsLoadingCamera(false);
+      setIsCapturingFace(false);
+      
+      if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+        setRequestError("Camera permission denied. Please allow camera access and try again.");
+      } else if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
+        setRequestError("No camera found. Please connect a camera and try again.");
+      } else {
+        setRequestError("Unable to access camera. Please check your camera settings.");
+      }
     }
   };
 
   const stopFaceCapture = () => {
-    if (videoRef.current && videoRef.current.srcObject) {
-      const tracks = videoRef.current.srcObject.getTracks();
-      tracks.forEach((track) => track.stop());
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
     setIsCapturingFace(false);
+    setIsLoadingCamera(false);
   };
 
   const captureFaceImage = () => {
-    if (!videoRef.current) return;
+    if (!videoRef.current || !streamRef.current) {
+      setRequestError("Camera not ready. Please try again.");
+      return;
+    }
+    
     const video = videoRef.current;
-    const canvas = document.createElement("canvas");
-    canvas.width = video.videoWidth || 320;
-    canvas.height = video.videoHeight || 240;
-    const ctx = canvas.getContext("2d");
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const dataUrl = canvas.toDataURL("image/jpeg");
-    setRequestFaceImage(dataUrl);
-    stopFaceCapture();
+    
+    // Wait for video to be ready
+    if (video.readyState < 2) {
+      video.addEventListener('loadedmetadata', () => {
+        captureFaceImage();
+      }, { once: true });
+      return;
+    }
+    
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth || 640;
+      canvas.height = video.videoHeight || 480;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
+      setRequestFaceImage(dataUrl);
+      stopFaceCapture();
+    } catch (error) {
+      console.error("Error capturing image:", error);
+      setRequestError("Failed to capture image. Please try again.");
+    }
   };
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const loadData = async () => {
@@ -525,6 +596,7 @@ export default function BriechStorageSystem() {
       setRequestError("");
     }
 
+    stopFaceCapture();
     setRequestFaceImage(null);
     setNewRequest({
       personnelName: "",
@@ -1298,6 +1370,7 @@ export default function BriechStorageSystem() {
 
                 <button
                   onClick={() => {
+                    stopFaceCapture();
                     setEditingRequestId(null);
                     setNewRequest({ personnelName: "" });
                     setNewRequestItems([{ componentId: "", quantity: 1, description: "" }]);
@@ -1713,56 +1786,73 @@ export default function BriechStorageSystem() {
 
               <div className="space-y-2">
                 <label className="block text-sm font-semibold">
-                  Face Capture
+                  Face Capture {requestFaceImage && <span className="text-green-600">✓</span>}
                 </label>
-                {requestFaceImage && (
-                  <div className="mb-2">
+                
+                {requestFaceImage && !isCapturingFace && (
+                  <div className="mb-2 flex flex-col items-center">
                     <img
                       src={requestFaceImage}
                       alt="Captured face"
-                      className="w-32 h-32 object-cover rounded-full border mx-auto"
+                      className="w-32 h-32 object-cover rounded-full border-2 border-green-500 shadow-md"
                     />
+                    <p className="text-xs text-gray-500 mt-2">Face captured successfully</p>
                   </div>
                 )}
+                
                 {isCapturingFace && (
-                  <div className="mb-2">
+                  <div className="mb-2 relative bg-gray-900 rounded-lg overflow-hidden">
+                    {isLoadingCamera && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-gray-900 bg-opacity-75 z-10">
+                        <div className="text-white text-sm">Starting camera...</div>
+                      </div>
+                    )}
                     <video
                       ref={videoRef}
-                      className="w-full rounded-lg border"
+                      className="w-full h-auto max-h-64 object-cover"
                       autoPlay
                       playsInline
+                      muted
                     />
-                  </div>
-                )}
-                <div className="flex flex-wrap gap-2">
-                  {!isCapturingFace && (
-                    <button
-                      type="button"
-                      onClick={startFaceCapture}
-                      className="px-3 py-1 bg-gray-100 text-gray-800 rounded text-xs font-semibold hover:bg-gray-200"
-                    >
-                      {requestFaceImage ? "Retake Face Capture" : "Start Camera"}
-                    </button>
-                  )}
-                  {isCapturingFace && (
-                    <>
+                    <div className="absolute bottom-2 left-0 right-0 flex justify-center gap-2">
                       <button
                         type="button"
                         onClick={captureFaceImage}
-                        className="px-3 py-1 bg-blue-600 text-white rounded text-xs font-semibold hover:bg-blue-700"
+                        disabled={isLoadingCamera}
+                        className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg"
                       >
-                        Capture
+                        📷 Capture
                       </button>
                       <button
                         type="button"
                         onClick={stopFaceCapture}
-                        className="px-3 py-1 bg-gray-100 text-gray-800 rounded text-xs font-semibold hover:bg-gray-200"
+                        disabled={isLoadingCamera}
+                        className="px-4 py-2 bg-gray-700 text-white rounded-lg text-sm font-semibold hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg"
                       >
-                        Cancel Camera
+                        Cancel
                       </button>
-                    </>
-                  )}
-                </div>
+                    </div>
+                  </div>
+                )}
+                
+                {!isCapturingFace && (
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={startFaceCapture}
+                      disabled={isLoadingCamera}
+                      className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    >
+                      {isLoadingCamera ? (
+                        <>⏳ Starting...</>
+                      ) : requestFaceImage ? (
+                        <>🔄 Retake Face Capture</>
+                      ) : (
+                        <>📷 Start Camera</>
+                      )}
+                    </button>
+                  </div>
+                )}
               </div>
 
               <div className="space-y-3">
@@ -1847,6 +1937,7 @@ export default function BriechStorageSystem() {
                 </button>
                 <button
                   onClick={() => {
+                    stopFaceCapture();
                     setShowRequestModal(false);
                     setEditingRequestId(null);
                     setRequestError("");
