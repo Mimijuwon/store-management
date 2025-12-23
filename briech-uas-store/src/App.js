@@ -132,6 +132,8 @@ export default function BriechStorageSystem() {
   const [newRequestItems, setNewRequestItems] = useState([
     { componentId: "", quantity: 1, description: "" },
   ]);
+  const [editingRequestId, setEditingRequestId] = useState(null);
+  const [requestSearchTerm, setRequestSearchTerm] = useState("");
 
   const [requestQuickFilter, setRequestQuickFilter] = useState("today"); // today | week | month | all
   const [requestStatusFilter, setRequestStatusFilter] = useState("all"); // all | pending | approved | returned
@@ -402,8 +404,12 @@ export default function BriechStorageSystem() {
 
     if (API_BASE) {
       try {
-        const response = await fetch(`${API_BASE}/requests`, {
-          method: "POST",
+        const url = editingRequestId
+          ? `${API_BASE}/requests/${editingRequestId}`
+          : `${API_BASE}/requests`;
+        const method = editingRequestId ? "PATCH" : "POST";
+        const response = await fetch(url, {
+          method,
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             personnelName: newRequest.personnelName,
@@ -411,39 +417,64 @@ export default function BriechStorageSystem() {
           }),
         });
         if (response.ok) {
-          const created = await response.json();
-          setRequests((prev) => [fromApiRequest(created), ...prev]);
+          const payload = await response.json();
+          const normalized = fromApiRequest(payload);
+          setRequests((prev) =>
+            editingRequestId
+              ? prev.map((r) => (String(r.id) === String(normalized.id) ? normalized : r))
+              : [normalized, ...prev],
+          );
           setRequestError("");
         } else {
           const err = await response.json().catch(() => null);
           if (err?.error) {
             setRequestError(err.error + (err.available !== undefined ? ` (Available: ${err.available})` : ""));
           } else {
-            setRequestError("Unable to create request. Please try again.");
+            setRequestError("Unable to save request. Please try again.");
           }
+          return;
         }
       } catch (error) {
-        console.error("Error creating request via API", error);
-        setRequestError("Network error while creating request. Please try again.");
+        console.error("Error saving request via API", error);
+        setRequestError("Network error while saving request. Please try again.");
+        return;
       }
     } else {
-      const request = {
-        id: Date.now().toString(),
-        personnelName: newRequest.personnelName,
-        items: newRequestItems.map((i) => ({
-          ...i,
-          componentName:
-            components.find((c) => String(c.id) === String(i.componentId))?.name || "",
-        })),
-        status: "pending",
-        requestedAt: new Date().toISOString(),
-        approvedAt: null,
-        returnedAt: null,
-      };
+      if (editingRequestId) {
+        const updatedRequests = requests.map((reqItem) =>
+          String(reqItem.id) === String(editingRequestId)
+            ? {
+                ...reqItem,
+                personnelName: newRequest.personnelName,
+                items: newRequestItems.map((i) => ({
+                  ...i,
+                  componentName:
+                    components.find((c) => String(c.id) === String(i.componentId))?.name || "",
+                })),
+              }
+            : reqItem,
+        );
+        setRequests(updatedRequests);
+        await storage.set("briech-requests", JSON.stringify(updatedRequests));
+      } else {
+        const request = {
+          id: Date.now().toString(),
+          personnelName: newRequest.personnelName,
+          items: newRequestItems.map((i) => ({
+            ...i,
+            componentName:
+              components.find((c) => String(c.id) === String(i.componentId))?.name || "",
+          })),
+          status: "pending",
+          requestedAt: new Date().toISOString(),
+          approvedAt: null,
+          returnedAt: null,
+        };
 
-      const updatedRequests = [request, ...requests];
-      setRequests(updatedRequests);
-      await storage.set("briech-requests", JSON.stringify(updatedRequests));
+        const updatedRequests = [request, ...requests];
+        setRequests(updatedRequests);
+        await storage.set("briech-requests", JSON.stringify(updatedRequests));
+      }
       setRequestError("");
     }
 
@@ -451,6 +482,7 @@ export default function BriechStorageSystem() {
       personnelName: "",
     });
     setNewRequestItems([{ componentId: "", quantity: 1, description: "" }]);
+    setEditingRequestId(null);
     setShowRequestModal(false);
   };
 
@@ -666,10 +698,6 @@ export default function BriechStorageSystem() {
   }, [requests]);
 
   const filteredRequests = useMemo(() => {
-    if (requestQuickFilter === "all") {
-      return requests;
-    }
-
     const now = new Date();
     const startOfToday = new Date(
       now.getFullYear(),
@@ -679,7 +707,7 @@ export default function BriechStorageSystem() {
 
     const isSameDay = (date) => {
       const d = new Date(date);
-      return (
+  return (
         d.getFullYear() === startOfToday.getFullYear() &&
         d.getMonth() === startOfToday.getMonth() &&
         d.getDate() === startOfToday.getDate()
@@ -708,21 +736,35 @@ export default function BriechStorageSystem() {
       );
     };
 
-    const byQuickFilter = requests.filter((request) => {
-      const requestedAt = request.requestedAt;
-      if (!requestedAt) return false;
+    const byQuickFilter =
+      requestQuickFilter === "all"
+        ? requests
+        : requests.filter((request) => {
+            const requestedAt = request.requestedAt;
+            if (!requestedAt) return false;
 
-      if (requestQuickFilter === "today") return isSameDay(requestedAt);
-      if (requestQuickFilter === "week") return isThisWeek(requestedAt);
-      if (requestQuickFilter === "month") return isThisMonth(requestedAt);
-      return true;
-    });
+            if (requestQuickFilter === "today") return isSameDay(requestedAt);
+            if (requestQuickFilter === "week") return isThisWeek(requestedAt);
+            if (requestQuickFilter === "month") return isThisMonth(requestedAt);
+            return true;
+          });
 
-    return byQuickFilter.filter((request) => {
-      if (requestStatusFilter === "all") return true;
-      return request.status === requestStatusFilter;
+    const byStatus =
+      requestStatusFilter === "all"
+        ? byQuickFilter
+        : byQuickFilter.filter((request) => request.status === requestStatusFilter);
+
+    const term = requestSearchTerm.trim().toLowerCase();
+    if (!term) return byStatus;
+
+    return byStatus.filter((request) => {
+      const personnelMatch = request.personnelName?.toLowerCase().includes(term);
+      const itemMatch = (request.items || []).some((i) =>
+        (i.componentName || "").toLowerCase().includes(term),
+      );
+      return personnelMatch || itemMatch;
     });
-  }, [requests, requestQuickFilter, requestStatusFilter]);
+  }, [requests, requestQuickFilter, requestStatusFilter, requestSearchTerm]);
 
   const addRequestItemRow = () => {
     setNewRequestItems((prev) => [...prev, { componentId: "", quantity: 1, description: "" }]);
@@ -736,6 +778,22 @@ export default function BriechStorageSystem() {
     setNewRequestItems((prev) =>
       prev.map((item, i) => (i === idx ? { ...item, [key]: value } : item)),
     );
+  };
+
+  const startEditRequest = (request) => {
+    setEditingRequestId(request.id);
+    setNewRequest({ personnelName: request.personnelName });
+    setNewRequestItems(
+      request.items && request.items.length > 0
+        ? request.items.map((item) => ({
+            componentId: item.componentId,
+            quantity: item.quantity,
+            description: item.description || "",
+          }))
+        : [{ componentId: "", quantity: 1, description: "" }],
+    );
+    setRequestError("");
+    setShowRequestModal(true);
   };
 
   return (
@@ -759,7 +817,7 @@ export default function BriechStorageSystem() {
               <Plus size={20} />
               Add Component
             </button>
-          </div>
+    </div>
         </div>
       </div>
 
@@ -1125,6 +1183,19 @@ export default function BriechStorageSystem() {
                   </div>
                 </div>
 
+                <div className="w-full sm:w-64">
+                  <label className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+                    Search
+                    <input
+                      type="text"
+                      value={requestSearchTerm}
+                      onChange={(e) => setRequestSearchTerm(e.target.value)}
+                      placeholder="Search personnel or item..."
+                      className="mt-1 w-full border rounded px-3 py-2 text-sm"
+                    />
+                  </label>
+                </div>
+
                 <div className="flex flex-col gap-2">
                   <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
                     Status scope
@@ -1178,7 +1249,13 @@ export default function BriechStorageSystem() {
                 </div>
 
                 <button
-                  onClick={() => setShowRequestModal(true)}
+                  onClick={() => {
+                    setEditingRequestId(null);
+                    setNewRequest({ personnelName: "" });
+                    setNewRequestItems([{ componentId: "", quantity: 1, description: "" }]);
+                    setRequestError("");
+                    setShowRequestModal(true);
+                  }}
                   className="bg-blue-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-blue-700 flex items-center gap-2 self-start sm:self-auto"
                 >
                   <Plus size={18} />
@@ -1272,6 +1349,14 @@ export default function BriechStorageSystem() {
                       </td>
                       <td className="px-3 py-2">
                         <div className="flex flex-wrap gap-2">
+                          {request.status === "pending" && (
+                            <button
+                              onClick={() => startEditRequest(request)}
+                              className="px-3 py-1 bg-gray-100 text-gray-700 rounded text-xs hover:bg-gray-200"
+                            >
+                              Edit
+                            </button>
+                          )}
                           {request.status === "pending" && (
                             <button
                               onClick={() =>
@@ -1549,7 +1634,9 @@ export default function BriechStorageSystem() {
       {showRequestModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-lg p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
-            <h2 className="text-2xl font-bold mb-4">New Sign-off Request</h2>
+            <h2 className="text-2xl font-bold mb-4">
+              {editingRequestId ? "Edit Sign-off Request" : "New Sign-off Request"}
+            </h2>
             <div className="space-y-4">
               <input
                 type="text"
@@ -1642,10 +1729,16 @@ export default function BriechStorageSystem() {
                   onClick={handleCreateRequest}
                   className="flex-1 bg-blue-600 text-white py-2 rounded font-semibold hover:bg-blue-700"
                 >
-                  Submit Request
+                  {editingRequestId ? "Save Changes" : "Submit Request"}
                 </button>
                 <button
-                  onClick={() => setShowRequestModal(false)}
+                  onClick={() => {
+                    setShowRequestModal(false);
+                    setEditingRequestId(null);
+                    setRequestError("");
+                    setNewRequest({ personnelName: "" });
+                    setNewRequestItems([{ componentId: "", quantity: 1, description: "" }]);
+                  }}
                   className="flex-1 bg-gray-300 text-gray-700 py-2 rounded font-semibold hover:bg-gray-400"
                 >
                   Cancel

@@ -583,6 +583,124 @@ app.patch("/requests/:id/status", requireAdmin, async (req, res) => {
   }
 });
 
+// Edit a request (only while pending)
+app.patch("/requests/:id", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { personnelName, items } = req.body;
+
+    if (!personnelName || !Array.isArray(items) || items.length === 0) {
+      return res
+        .status(400)
+        .json({ error: "personnelName and items are required" });
+    }
+
+    for (const item of items) {
+      if (!item.componentId || !item.quantity || item.quantity <= 0) {
+        return res
+          .status(400)
+          .json({ error: "Each item needs componentId and quantity > 0" });
+      }
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      const reqRow = await client.query(
+        `SELECT * FROM requests WHERE id = $1 FOR UPDATE`,
+        [id],
+      );
+
+      if (reqRow.rowCount === 0) {
+        await client.query("ROLLBACK");
+        client.release();
+        return res.status(404).json({ error: "Request not found" });
+      }
+
+      const existing = reqRow.rows[0];
+      if (existing.status !== "PENDING") {
+        await client.query("ROLLBACK");
+        client.release();
+        return res.status(400).json({ error: "Only pending requests can be edited" });
+      }
+
+      // Validate stock for new items
+      for (const item of items) {
+        const componentRes = await client.query(
+          `SELECT id, name, quantity FROM components WHERE id = $1`,
+          [item.componentId],
+        );
+        if (componentRes.rowCount === 0) {
+          await client.query("ROLLBACK");
+          client.release();
+          return res.status(404).json({ error: `Component not found (id ${item.componentId})` });
+        }
+        const comp = componentRes.rows[0];
+        if (comp.quantity <= 0 || comp.quantity < item.quantity) {
+          await client.query("ROLLBACK");
+          client.release();
+          return res.status(400).json({
+            error: `Requested quantity for ${comp.name} exceeds available stock`,
+            available: comp.quantity,
+          });
+        }
+      }
+
+      await client.query(
+        `UPDATE requests SET personnel_name = $1 WHERE id = $2`,
+        [personnelName, id],
+      );
+
+      await client.query(`DELETE FROM request_items WHERE request_id = $1`, [id]);
+
+      for (const item of items) {
+        await client.query(
+          `INSERT INTO request_items (request_id, component_id, quantity, description)
+           VALUES ($1,$2,$3,$4)`,
+          [id, item.componentId, item.quantity, item.description || ""],
+        );
+      }
+
+      const full = await client.query(
+        `SELECT 
+           r.*,
+           COALESCE(
+             json_agg(
+               json_build_object(
+                 'id', ri.id,
+                 'component_id', ri.component_id,
+                 'quantity', ri.quantity,
+                 'description', ri.description,
+                 'component_name', c.name,
+                 'unit', c.unit,
+                 'consumable', c.consumable
+               )
+             ) FILTER (WHERE ri.id IS NOT NULL),
+             '[]'
+           ) AS items
+         FROM requests r
+         LEFT JOIN request_items ri ON ri.request_id = r.id
+         LEFT JOIN components c ON ri.component_id = c.id
+         WHERE r.id = $1
+         GROUP BY r.id`,
+        [id],
+      );
+
+      await client.query("COMMIT");
+      client.release();
+      res.json(full.rows[0]);
+    } catch (error) {
+      await client.query("ROLLBACK");
+      client.release();
+      throw error;
+    }
+  } catch (error) {
+    console.error("Edit request error", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // Usage history
 app.get("/usage", async (_req, res) => {
   try {
