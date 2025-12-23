@@ -419,41 +419,38 @@ app.patch("/requests/:id/status", requireAdmin, async (req, res) => {
     try {
       await client.query("BEGIN");
 
-      const existing = await client.query(
-        `SELECT 
-           r.*,
-           COALESCE(
-             json_agg(
-               json_build_object(
-                 'id', ri.id,
-                 'component_id', ri.component_id,
-                 'quantity', ri.quantity,
-                 'description', ri.description,
-                 'component_name', c.name,
-                 'unit', c.unit,
-                 'consumable', c.consumable,
-                 'component_quantity', c.quantity
-               )
-             ) FILTER (WHERE ri.id IS NOT NULL),
-             '[]'
-           ) AS items
-         FROM requests r
-         LEFT JOIN request_items ri ON ri.request_id = r.id
-         LEFT JOIN components c ON ri.component_id = c.id
-         WHERE r.id = $1
-         GROUP BY r.id
-         FOR UPDATE`,
+      // Lock the request row
+      const reqRow = await client.query(
+        `SELECT * FROM requests WHERE id = $1 FOR UPDATE`,
         [id],
       );
 
-      if (existing.rowCount === 0) {
+      if (reqRow.rowCount === 0) {
         await client.query("ROLLBACK");
         client.release();
         return res.status(404).json({ error: "Request not found" });
       }
 
-      const row = existing.rows[0];
-      const items = Array.isArray(row.items) ? row.items : [];
+      const row = reqRow.rows[0];
+
+      // Fetch items (no FOR UPDATE on grouped query); per-component updates will lock rows during UPDATE
+      const itemsRes = await client.query(
+        `SELECT 
+           ri.id,
+           ri.component_id,
+           ri.quantity,
+           ri.description,
+           c.name AS component_name,
+           c.unit AS unit,
+           c.consumable AS consumable,
+           c.quantity AS component_quantity
+         FROM request_items ri
+         JOIN components c ON ri.component_id = c.id
+         WHERE ri.request_id = $1`,
+        [id],
+      );
+
+      const items = itemsRes.rows || [];
       const now = new Date();
 
       if (items.length === 0) {
