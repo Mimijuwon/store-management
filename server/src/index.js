@@ -453,15 +453,25 @@ app.patch("/requests/:id/status", requireAdmin, async (req, res) => {
       }
 
       const row = existing.rows[0];
-      const items = row.items || [];
+      const items = Array.isArray(row.items) ? row.items : [];
       const now = new Date();
+
+      if (items.length === 0) {
+        await client.query("ROLLBACK");
+        client.release();
+        return res.status(400).json({ error: "No items on this request" });
+      }
 
       if (status === "APPROVED") {
         for (const item of items) {
-          if (item.component_quantity < item.quantity) {
+          const qty = Number(item.quantity) || 0;
+          const available = Number(item.component_quantity) || 0;
+          if (available < qty) {
             await client.query("ROLLBACK");
             client.release();
-            return res.status(400).json({ error: `Insufficient stock for ${item.component_name}` });
+            return res
+              .status(400)
+              .json({ error: `Insufficient stock for ${item.component_name || "item"}` });
           }
         }
 
@@ -473,11 +483,12 @@ app.patch("/requests/:id/status", requireAdmin, async (req, res) => {
         );
 
         for (const item of items) {
+          const qty = Number(item.quantity) || 0;
           await client.query(
             `UPDATE components
              SET quantity = quantity - $1
              WHERE id = $2`,
-            [item.quantity, item.component_id],
+            [qty, item.component_id],
           );
 
           await client.query(
@@ -486,7 +497,7 @@ app.patch("/requests/:id/status", requireAdmin, async (req, res) => {
              VALUES ($1, $2, $3, $4, $5, $6)`,
             [
               item.component_id,
-              -Math.abs(item.quantity),
+              -Math.abs(qty),
               "remove",
               `Request by ${row.personnel_name}`,
               item.description || "",
@@ -504,11 +515,12 @@ app.patch("/requests/:id/status", requireAdmin, async (req, res) => {
 
         for (const item of items) {
           if (item.consumable === false) {
+            const qty = Number(item.quantity) || 0;
             await client.query(
               `UPDATE components
                SET quantity = quantity + $1
                WHERE id = $2`,
-              [item.quantity, item.component_id],
+              [qty, item.component_id],
             );
 
             await client.query(
@@ -517,7 +529,7 @@ app.patch("/requests/:id/status", requireAdmin, async (req, res) => {
                VALUES ($1, $2, $3, $4, $5, $6)`,
               [
                 item.component_id,
-                Math.abs(item.quantity),
+                Math.abs(qty),
                 "add",
                 `Return by ${row.personnel_name}`,
                 item.description || "",
