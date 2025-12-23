@@ -1195,7 +1195,7 @@ export default function BriechStorageSystem() {
                       Personnel
                     </th>
                     <th className="px-3 py-2 text-left font-semibold text-gray-700">
-                      Items
+                      Items (Qty)
                     </th>
                     <th className="px-3 py-2 text-left font-semibold text-gray-700">
                       Status
@@ -1234,8 +1234,8 @@ export default function BriechStorageSystem() {
                                   {item.description || ""}
                                 </div>
                               </div>
-                              <div className="text-xs text-gray-600 whitespace-nowrap">
-                                {item.quantity} {item.unit || ""}
+                              <div className="text-xs text-gray-700 whitespace-nowrap font-semibold">
+                                Qty: {item.quantity} {item.unit || ""}
                               </div>
                             </div>
                           ))
