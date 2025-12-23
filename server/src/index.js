@@ -75,13 +75,18 @@ async function initDb() {
     CREATE TABLE IF NOT EXISTS requests (
       id SERIAL PRIMARY KEY,
       personnel_name TEXT NOT NULL,
-      component_id INTEGER NOT NULL REFERENCES components(id),
-      quantity INTEGER NOT NULL,
-      description TEXT NOT NULL DEFAULT '',
       status TEXT NOT NULL DEFAULT 'PENDING',
       requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       approved_at TIMESTAMPTZ,
       returned_at TIMESTAMPTZ
+    );
+
+    CREATE TABLE IF NOT EXISTS request_items (
+      id SERIAL PRIMARY KEY,
+      request_id INTEGER NOT NULL REFERENCES requests(id) ON DELETE CASCADE,
+      component_id INTEGER NOT NULL REFERENCES components(id),
+      quantity INTEGER NOT NULL,
+      description TEXT NOT NULL DEFAULT ''
     );
 
     CREATE TABLE IF NOT EXISTS users (
@@ -221,9 +226,26 @@ app.post("/components", async (req, res) => {
 app.get("/requests", async (_req, res) => {
   try {
     const result = await query(
-      `SELECT r.*, c.name AS component_name, c.unit AS component_unit, c.consumable
+      `SELECT 
+         r.*,
+         COALESCE(
+           json_agg(
+             json_build_object(
+               'id', ri.id,
+               'component_id', ri.component_id,
+               'quantity', ri.quantity,
+               'description', ri.description,
+               'component_name', c.name,
+               'unit', c.unit,
+               'consumable', c.consumable
+             )
+           ) FILTER (WHERE ri.id IS NOT NULL),
+           '[]'
+         ) AS items
        FROM requests r
-       JOIN components c ON r.component_id = c.id
+       LEFT JOIN request_items ri ON ri.request_id = r.id
+       LEFT JOIN components c ON ri.component_id = c.id
+       GROUP BY r.id
        ORDER BY r.requested_at DESC`,
     );
     res.json(result.rows);
@@ -236,10 +258,27 @@ app.get("/requests", async (_req, res) => {
 app.get("/requests/outstanding", async (_req, res) => {
   try {
     const result = await query(
-      `SELECT r.*, c.name AS component_name, c.unit AS component_unit, c.consumable
+      `SELECT 
+         r.*,
+         COALESCE(
+           json_agg(
+             json_build_object(
+               'id', ri.id,
+               'component_id', ri.component_id,
+               'quantity', ri.quantity,
+               'description', ri.description,
+               'component_name', c.name,
+               'unit', c.unit,
+               'consumable', c.consumable
+             )
+           ) FILTER (WHERE ri.id IS NOT NULL),
+           '[]'
+         ) AS items
        FROM requests r
-       JOIN components c ON r.component_id = c.id
+       JOIN request_items ri ON ri.request_id = r.id
+       JOIN components c ON ri.component_id = c.id
        WHERE r.status = 'APPROVED' AND c.consumable = FALSE
+       GROUP BY r.id
        ORDER BY r.requested_at DESC`,
     );
     res.json(result.rows);
@@ -251,40 +290,91 @@ app.get("/requests/outstanding", async (_req, res) => {
 
 app.post("/requests", async (req, res) => {
   try {
-    const { personnelName, componentId, quantity, description } = req.body;
+    const { personnelName, items } = req.body;
 
-    if (!personnelName || !componentId || !quantity) {
+    if (!personnelName || !Array.isArray(items) || items.length === 0) {
       return res
         .status(400)
-        .json({ error: "personnelName, componentId and quantity are required" });
+        .json({ error: "personnelName and items are required" });
     }
 
-    const componentRes = await query(
-      `SELECT id, name, quantity
-       FROM components
-       WHERE id = $1`,
-      [componentId],
-    );
-    if (componentRes.rowCount === 0) {
-      return res.status(404).json({ error: "Component not found" });
-    }
-    const comp = componentRes.rows[0];
-    if (comp.quantity <= 0 || comp.quantity < quantity) {
-      return res.status(400).json({
-        error: "Requested quantity exceeds available stock",
-        available: comp.quantity,
-      });
+    for (const item of items) {
+      if (!item.componentId || !item.quantity || item.quantity <= 0) {
+        return res
+          .status(400)
+          .json({ error: "Each item needs componentId and quantity > 0" });
+      }
     }
 
-    const result = await query(
-      `INSERT INTO requests
-        (personnel_name, component_id, quantity, description, status, requested_at)
-       VALUES ($1,$2,$3,$4,'PENDING',NOW())
-       RETURNING *`,
-      [personnelName, componentId, quantity, description || ""],
-    );
+    for (const item of items) {
+      const componentRes = await query(
+        `SELECT id, name, quantity FROM components WHERE id = $1`,
+        [item.componentId],
+      );
+      if (componentRes.rowCount === 0) {
+        return res.status(404).json({ error: `Component not found (id ${item.componentId})` });
+      }
+      const comp = componentRes.rows[0];
+      if (comp.quantity <= 0 || comp.quantity < item.quantity) {
+        return res.status(400).json({
+          error: `Requested quantity for ${comp.name} exceeds available stock`,
+          available: comp.quantity,
+        });
+      }
+    }
 
-    res.status(201).json(result.rows[0]);
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const requestInsert = await client.query(
+        `INSERT INTO requests (personnel_name, status, requested_at)
+         VALUES ($1,'PENDING',NOW())
+         RETURNING *`,
+        [personnelName],
+      );
+      const request = requestInsert.rows[0];
+
+      for (const item of items) {
+        await client.query(
+          `INSERT INTO request_items (request_id, component_id, quantity, description)
+           VALUES ($1,$2,$3,$4)`,
+          [request.id, item.componentId, item.quantity, item.description || ""],
+        );
+      }
+
+      const full = await client.query(
+        `SELECT 
+           r.*,
+           COALESCE(
+             json_agg(
+               json_build_object(
+                 'id', ri.id,
+                 'component_id', ri.component_id,
+                 'quantity', ri.quantity,
+                 'description', ri.description,
+                 'component_name', c.name,
+                 'unit', c.unit,
+                 'consumable', c.consumable
+               )
+             ) FILTER (WHERE ri.id IS NOT NULL),
+             '[]'
+           ) AS items
+         FROM requests r
+         LEFT JOIN request_items ri ON ri.request_id = r.id
+         LEFT JOIN components c ON ri.component_id = c.id
+         WHERE r.id = $1
+         GROUP BY r.id`,
+        [request.id],
+      );
+
+      await client.query("COMMIT");
+      client.release();
+      res.status(201).json(full.rows[0]);
+    } catch (err) {
+      await client.query("ROLLBACK");
+      client.release();
+      throw err;
+    }
   } catch (error) {
     console.error("Create request error", error);
     res.status(500).json({ error: "Internal server error" });
@@ -305,10 +395,28 @@ app.patch("/requests/:id/status", requireAdmin, async (req, res) => {
       await client.query("BEGIN");
 
       const existing = await client.query(
-        `SELECT r.*, c.quantity AS component_quantity, c.consumable, c.id AS component_id
+        `SELECT 
+           r.*,
+           COALESCE(
+             json_agg(
+               json_build_object(
+                 'id', ri.id,
+                 'component_id', ri.component_id,
+                 'quantity', ri.quantity,
+                 'description', ri.description,
+                 'component_name', c.name,
+                 'unit', c.unit,
+                 'consumable', c.consumable,
+                 'component_quantity', c.quantity
+               )
+             ) FILTER (WHERE ri.id IS NOT NULL),
+             '[]'
+           ) AS items
          FROM requests r
-         JOIN components c ON r.component_id = c.id
+         LEFT JOIN request_items ri ON ri.request_id = r.id
+         LEFT JOIN components c ON ri.component_id = c.id
          WHERE r.id = $1
+         GROUP BY r.id
          FOR UPDATE`,
         [id],
       );
@@ -320,13 +428,16 @@ app.patch("/requests/:id/status", requireAdmin, async (req, res) => {
       }
 
       const row = existing.rows[0];
+      const items = row.items || [];
       const now = new Date();
 
       if (status === "APPROVED") {
-        if (row.component_quantity < row.quantity) {
-          await client.query("ROLLBACK");
-          client.release();
-          return res.status(400).json({ error: "Insufficient stock" });
+        for (const item of items) {
+          if (item.component_quantity < item.quantity) {
+            await client.query("ROLLBACK");
+            client.release();
+            return res.status(400).json({ error: `Insufficient stock for ${item.component_name}` });
+          }
         }
 
         await client.query(
@@ -336,26 +447,28 @@ app.patch("/requests/:id/status", requireAdmin, async (req, res) => {
           [now, id],
         );
 
-        await client.query(
-          `UPDATE components
-           SET quantity = quantity - $1
-           WHERE id = $2`,
-          [row.quantity, row.component_id],
-        );
+        for (const item of items) {
+          await client.query(
+            `UPDATE components
+             SET quantity = quantity - $1
+             WHERE id = $2`,
+            [item.quantity, item.component_id],
+          );
 
-        await client.query(
-          `INSERT INTO usage_history
-            (component_id, quantity, type, project, notes, date)
-           VALUES ($1, $2, $3, $4, $5, $6)`,
-          [
-            row.component_id,
-            -Math.abs(row.quantity),
-            "remove",
-            `Request by ${row.personnel_name}`,
-            row.description || "",
-            now,
-          ],
-        );
+          await client.query(
+            `INSERT INTO usage_history
+              (component_id, quantity, type, project, notes, date)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [
+              item.component_id,
+              -Math.abs(item.quantity),
+              "remove",
+              `Request by ${row.personnel_name}`,
+              item.description || "",
+              now,
+            ],
+          );
+        }
       } else if (status === "RETURNED") {
         await client.query(
           `UPDATE requests
@@ -364,27 +477,29 @@ app.patch("/requests/:id/status", requireAdmin, async (req, res) => {
           [now, id],
         );
 
-        if (row.consumable === false) {
-          await client.query(
-            `UPDATE components
-             SET quantity = quantity + $1
-             WHERE id = $2`,
-            [row.quantity, row.component_id],
-          );
+        for (const item of items) {
+          if (item.consumable === false) {
+            await client.query(
+              `UPDATE components
+               SET quantity = quantity + $1
+               WHERE id = $2`,
+              [item.quantity, item.component_id],
+            );
 
-          await client.query(
-            `INSERT INTO usage_history
-              (component_id, quantity, type, project, notes, date)
-             VALUES ($1, $2, $3, $4, $5, $6)`,
-            [
-              row.component_id,
-              Math.abs(row.quantity),
-              "add",
-              `Return by ${row.personnel_name}`,
-              row.description || "",
-              now,
-            ],
-          );
+            await client.query(
+              `INSERT INTO usage_history
+                (component_id, quantity, type, project, notes, date)
+               VALUES ($1, $2, $3, $4, $5, $6)`,
+              [
+                item.component_id,
+                Math.abs(item.quantity),
+                "add",
+                `Return by ${row.personnel_name}`,
+                item.description || "",
+                now,
+              ],
+            );
+          }
         }
       } else if (status === "PENDING") {
         await client.query(
@@ -396,10 +511,27 @@ app.patch("/requests/:id/status", requireAdmin, async (req, res) => {
       }
 
       const updated = await client.query(
-        `SELECT r.*, c.name AS component_name, c.unit AS component_unit, c.consumable
+        `SELECT 
+           r.*,
+           COALESCE(
+             json_agg(
+               json_build_object(
+                 'id', ri.id,
+                 'component_id', ri.component_id,
+                 'quantity', ri.quantity,
+                 'description', ri.description,
+                 'component_name', c.name,
+                 'unit', c.unit,
+                 'consumable', c.consumable
+               )
+             ) FILTER (WHERE ri.id IS NOT NULL),
+             '[]'
+           ) AS items
          FROM requests r
-         JOIN components c ON r.component_id = c.id
-         WHERE r.id = $1`,
+         LEFT JOIN request_items ri ON ri.request_id = r.id
+         LEFT JOIN components c ON ri.component_id = c.id
+         WHERE r.id = $1
+         GROUP BY r.id`,
         [id],
       );
 

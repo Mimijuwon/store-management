@@ -49,10 +49,6 @@ const fromApiComponent = (raw) => ({
 const fromApiRequest = (raw) => ({
   id: raw.id,
   personnelName: raw.personnel_name || raw.personnelName || "",
-  componentId: raw.component_id ?? raw.componentId,
-  componentName: raw.component_name || raw.componentName || "",
-  quantity: raw.quantity ?? 0,
-  description: raw.description || "",
   status: (raw.status || "").toLowerCase() || "pending",
   requestedAt: raw.requested_at || raw.requestedAt || null,
   approvedAt: raw.approved_at || raw.approvedAt || null,
@@ -63,6 +59,22 @@ const fromApiRequest = (raw) => ({
       : raw.consumable === "false"
       ? false
       : true,
+  items: Array.isArray(raw.items)
+    ? raw.items.map((i) => ({
+        id: i.id,
+        componentId: i.component_id ?? i.componentId,
+        componentName: i.component_name || i.componentName || "",
+        quantity: i.quantity ?? 0,
+        description: i.description || "",
+        unit: i.unit || "pcs",
+        consumable:
+          typeof i.consumable === "boolean"
+            ? i.consumable
+            : i.consumable === "false"
+            ? false
+            : true,
+      }))
+    : [],
 });
 
 const fromApiUsage = (raw) => ({
@@ -116,10 +128,10 @@ export default function BriechStorageSystem() {
 
   const [newRequest, setNewRequest] = useState({
     personnelName: "",
-    componentId: "",
-    quantity: 1,
-    description: "",
   });
+  const [newRequestItems, setNewRequestItems] = useState([
+    { componentId: "", quantity: 1, description: "" },
+  ]);
 
   const [requestQuickFilter, setRequestQuickFilter] = useState("today"); // today | week | month | all
   const [requestStatusFilter, setRequestStatusFilter] = useState("all"); // all | pending | approved | returned
@@ -348,33 +360,44 @@ export default function BriechStorageSystem() {
   };
 
   const handleCreateRequest = async () => {
-    if (
-      !newRequest.personnelName ||
-      !newRequest.componentId ||
-      newRequest.quantity <= 0
-    ) {
-      setRequestError("Please fill all fields and use a quantity greater than zero.");
+    if (!newRequest.personnelName) {
+      setRequestError("Personnel name is required.");
       return;
     }
 
-    const component = components.find(
-      (componentItem) => String(componentItem.id) === String(newRequest.componentId),
-    );
-    if (!component) {
-      setRequestError("Selected item could not be found.");
+    const items = newRequestItems.map((item) => ({
+      componentId: item.componentId,
+      quantity: Number(item.quantity) || 0,
+      description: item.description || "",
+    }));
+
+    if (items.length === 0) {
+      setRequestError("Add at least one item.");
       return;
     }
 
-    if (component.quantity <= 0) {
-      setRequestError("This item is currently out of stock and cannot be requested.");
-      return;
-    }
-
-    if (newRequest.quantity > component.quantity) {
-      setRequestError(
-        `Only ${component.quantity} ${component.unit || ""} available. Reduce the requested quantity.`,
+    for (const item of items) {
+      if (!item.componentId || item.quantity <= 0) {
+        setRequestError("Each item needs a component and a quantity greater than zero.");
+        return;
+      }
+      const comp = components.find(
+        (componentItem) => String(componentItem.id) === String(item.componentId),
       );
-      return;
+      if (!comp) {
+        setRequestError("Selected item could not be found.");
+        return;
+      }
+      if (comp.quantity <= 0) {
+        setRequestError(`"${comp.name}" is out of stock and cannot be requested.`);
+        return;
+      }
+      if (item.quantity > comp.quantity) {
+        setRequestError(
+          `"${comp.name}": only ${comp.quantity} ${comp.unit || ""} available. Reduce the requested quantity.`,
+        );
+        return;
+      }
     }
 
     if (API_BASE) {
@@ -384,9 +407,7 @@ export default function BriechStorageSystem() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             personnelName: newRequest.personnelName,
-            componentId: component.id,
-            quantity: newRequest.quantity,
-            description: newRequest.description,
+            items: items,
           }),
         });
         if (response.ok) {
@@ -409,11 +430,12 @@ export default function BriechStorageSystem() {
       const request = {
         id: Date.now().toString(),
         personnelName: newRequest.personnelName,
-        componentId: component.id,
-        componentName: component.name,
-        quantity: newRequest.quantity,
-        description: newRequest.description,
-        status: "pending", // pending -> approved -> returned
+        items: newRequestItems.map((i) => ({
+          ...i,
+          componentName:
+            components.find((c) => String(c.id) === String(i.componentId))?.name || "",
+        })),
+        status: "pending",
         requestedAt: new Date().toISOString(),
         approvedAt: null,
         returnedAt: null,
@@ -427,10 +449,8 @@ export default function BriechStorageSystem() {
 
     setNewRequest({
       personnelName: "",
-      componentId: "",
-      quantity: 1,
-      description: "",
     });
+    setNewRequestItems([{ componentId: "", quantity: 1, description: "" }]);
     setShowRequestModal(false);
   };
 
@@ -703,6 +723,20 @@ export default function BriechStorageSystem() {
       return request.status === requestStatusFilter;
     });
   }, [requests, requestQuickFilter, requestStatusFilter]);
+
+  const addRequestItemRow = () => {
+    setNewRequestItems((prev) => [...prev, { componentId: "", quantity: 1, description: "" }]);
+  };
+
+  const removeRequestItemRow = (idx) => {
+    setNewRequestItems((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  const updateRequestItemRow = (idx, key, value) => {
+    setNewRequestItems((prev) =>
+      prev.map((item, i) => (i === idx ? { ...item, [key]: value } : item)),
+    );
+  };
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -1161,10 +1195,7 @@ export default function BriechStorageSystem() {
                       Personnel
                     </th>
                     <th className="px-3 py-2 text-left font-semibold text-gray-700">
-                      Item
-                    </th>
-                    <th className="px-3 py-2 text-left font-semibold text-gray-700">
-                      Qty
+                      Items
                     </th>
                     <th className="px-3 py-2 text-left font-semibold text-gray-700">
                       Status
@@ -1190,13 +1221,27 @@ export default function BriechStorageSystem() {
                           </div>
                         )}
                       </td>
-                      <td className="px-3 py-2">
-                        <div className="font-medium">
-                          {request.componentName}
-                        </div>
-                      </td>
-                      <td className="px-3 py-2">
-                        {request.quantity}
+                      <td className="px-3 py-2 text-sm text-gray-700 space-y-1">
+                        {request.items && request.items.length > 0 ? (
+                          request.items.map((item) => (
+                            <div
+                              key={item.id || `${request.id}-${item.componentId}-${item.quantity}`}
+                              className="flex items-start justify-between gap-2"
+                            >
+                              <div className="flex-1">
+                                <div className="font-semibold">{item.componentName || "Item"}</div>
+                                <div className="text-xs text-gray-500">
+                                  {item.description || ""}
+                                </div>
+                              </div>
+                              <div className="text-xs text-gray-600 whitespace-nowrap">
+                                {item.quantity} {item.unit || ""}
+                              </div>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="text-xs text-gray-500">No items</div>
+                        )}
                       </td>
                       <td className="px-3 py-2">
                         <span
@@ -1518,48 +1563,77 @@ export default function BriechStorageSystem() {
                 }
                 className="w-full border rounded p-2"
               />
-              <select
-                value={newRequest.componentId}
-                onChange={(event) =>
-                  setNewRequest((prev) => ({
-                    ...prev,
-                    componentId: event.target.value,
-                  }))
-                }
-                className="w-full border rounded p-2"
-              >
-                <option value="">Select Item</option>
-                {components.map((component) => (
-                  <option key={component.id} value={component.id}>
-                    {component.name} ({component.quantity} {component.unit} in stock)
-                  </option>
+
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-semibold">Items</h4>
+                  <button
+                    type="button"
+                    onClick={addRequestItemRow}
+                    className="text-sm text-blue-600 hover:text-blue-700 font-semibold"
+                  >
+                    + Add item
+                  </button>
+                </div>
+
+                {newRequestItems.map((item, idx) => (
+                  <div
+                    key={idx}
+                    className="border rounded p-3 space-y-2 bg-gray-50"
+                  >
+                    <div className="flex gap-2 items-center">
+                      <select
+                        value={item.componentId}
+                        onChange={(event) =>
+                          updateRequestItemRow(idx, "componentId", event.target.value)
+                        }
+                        className="w-full border rounded p-2"
+                      >
+                        <option value="">Select Item</option>
+                        {components.map((component) => (
+                          <option key={component.id} value={component.id}>
+                            {component.name} ({component.quantity} {component.unit} in stock)
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        type="number"
+                        min={1}
+                        value={item.quantity}
+                        onChange={(event) =>
+                          updateRequestItemRow(
+                            idx,
+                            "quantity",
+                            parseInt(event.target.value, 10) || 1,
+                          )
+                        }
+                        className="w-24 border rounded p-2"
+                      />
+                    </div>
+                    <textarea
+                      placeholder="Item description (optional)"
+                      value={item.description}
+                      onChange={(event) =>
+                        updateRequestItemRow(idx, "description", event.target.value)
+                      }
+                      className="w-full border rounded p-2"
+                      rows={2}
+                    />
+                    {newRequestItems.length > 1 && (
+                      <div className="text-right">
+                        <button
+                          type="button"
+                          onClick={() => removeRequestItemRow(idx)}
+                          className="text-xs text-red-600 hover:text-red-700"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 ))}
-              </select>
-              <input
-                type="number"
-                placeholder="Quantity"
-                min={1}
-                value={newRequest.quantity}
-                onChange={(event) =>
-                  setNewRequest((prev) => ({
-                    ...prev,
-                    quantity: parseInt(event.target.value, 10) || 1,
-                  }))
-                }
-                className="w-full border rounded p-2"
-              />
-              <textarea
-                placeholder="Item type / description (optional)"
-                value={newRequest.description}
-                onChange={(event) =>
-                  setNewRequest((prev) => ({
-                    ...prev,
-                    description: event.target.value,
-                  }))
-                }
-                className="w-full border rounded p-2"
-                rows={3}
-              />
+              </div>
+
               {requestError && (
                 <p className="text-sm text-red-600">{requestError}</p>
               )}
