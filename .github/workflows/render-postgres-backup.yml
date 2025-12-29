@@ -1,0 +1,27 @@
+name: Render PostgreSQL Automatic Backup
+
+on:
+  schedule:
+    - cron: "0 1 * * *"
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Backup database
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          docker run --rm \
+            -e DATABASE_URL="$DATABASE_URL" \
+            postgres:18 \
+            pg_dump -Fc "$DATABASE_URL" > database.dump
+
+      - name: Upload backup
+        uses: actions/upload-artifact@v4
+        with:
+          name: postgres-backup
+          path: database.dump
+          retention-days: 30
