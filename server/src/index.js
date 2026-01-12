@@ -3,6 +3,7 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const { Pool } = require("pg");
+const { notifyRequestApproved, notifyRequestReturned, notifyLowStock } = require("./notifications");
 
 const app = express();
 
@@ -578,7 +579,47 @@ app.patch("/requests/:id/status", requireAdmin, async (req, res) => {
 
       await client.query("COMMIT");
       client.release();
-      res.json(updated.rows[0]);
+
+      // Send email notifications (non-blocking)
+      const requestData = updated.rows[0];
+      if (status === "APPROVED") {
+        notifyRequestApproved({
+          personnelName: requestData.personnel_name,
+          department: requestData.department,
+          items: requestData.items || [],
+          requestedAt: requestData.requested_at,
+        }).catch((err) => console.error("Notification error (approved):", err));
+
+        // Check for low stock after approval
+        for (const item of items) {
+          const compCheck = await query(
+            `SELECT id, name, quantity, min_stock, category_name, location FROM components WHERE id = $1`,
+            [item.component_id],
+          );
+          if (compCheck.rowCount > 0) {
+            const comp = compCheck.rows[0];
+            if (comp.quantity <= comp.min_stock) {
+              notifyLowStock({
+                name: comp.name,
+                quantity: comp.quantity,
+                minStock: comp.min_stock,
+                category: comp.category_name,
+                location: comp.location,
+              }).catch((err) => console.error("Notification error (low stock):", err));
+            }
+          }
+        }
+      } else if (status === "RETURNED") {
+        notifyRequestReturned({
+          personnelName: requestData.personnel_name,
+          department: requestData.department,
+          items: requestData.items || [],
+          requestedAt: requestData.requested_at,
+          returnedAt: requestData.returned_at,
+        }).catch((err) => console.error("Notification error (returned):", err));
+      }
+
+      res.json(requestData);
     } catch (error) {
       await client.query("ROLLBACK");
       client.release();
