@@ -49,6 +49,7 @@ const fromApiComponent = (raw) => ({
 const fromApiRequest = (raw) => ({
   id: raw.id,
   personnelName: raw.personnel_name || raw.personnelName || "",
+  department: raw.department || raw.departmentName || "",
   faceImage: raw.face_image || raw.faceImage || null,
   status: (raw.status || "").toLowerCase() || "pending",
   requestedAt: raw.requested_at || raw.requestedAt || null,
@@ -129,6 +130,7 @@ export default function BriechStorageSystem() {
 
   const [newRequest, setNewRequest] = useState({
     personnelName: "",
+    department: "",
   });
   const [newRequestItems, setNewRequestItems] = useState([
     { componentId: "", quantity: 1, description: "" },
@@ -528,6 +530,11 @@ export default function BriechStorageSystem() {
       return;
     }
 
+    if (!newRequest.department) {
+      setRequestError("Department is required.");
+      return;
+    }
+
     if (!requestFaceImage) {
       setRequestError("Please capture your face before submitting.");
       return;
@@ -579,6 +586,7 @@ export default function BriechStorageSystem() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             personnelName: newRequest.personnelName,
+            department: newRequest.department,
             items: items,
             faceImage: requestFaceImage,
           }),
@@ -613,6 +621,7 @@ export default function BriechStorageSystem() {
             ? {
                 ...reqItem,
                 personnelName: newRequest.personnelName,
+                department: newRequest.department,
                 items: newRequestItems.map((i) => ({
                   ...i,
                   componentName:
@@ -627,6 +636,7 @@ export default function BriechStorageSystem() {
         const request = {
           id: Date.now().toString(),
           personnelName: newRequest.personnelName,
+          department: newRequest.department,
           faceImage: requestFaceImage,
           items: newRequestItems.map((i) => ({
             ...i,
@@ -650,6 +660,7 @@ export default function BriechStorageSystem() {
     setRequestFaceImage(null);
     setNewRequest({
       personnelName: "",
+      department: "",
     });
     setNewRequestItems([{ componentId: "", quantity: 1, description: "" }]);
     setEditingRequestId(null);
@@ -1144,9 +1155,9 @@ export default function BriechStorageSystem() {
                       <p className="text-sm text-gray-400 mt-1">
                         Click "New Request" above to create one
                       </p>
-                    </div>
-                  );
-                }
+    </div>
+  );
+}
 
                 return (
                   <div className="space-y-6">
@@ -1263,6 +1274,19 @@ export default function BriechStorageSystem() {
                     setNewRequest((prev) => ({
                       ...prev,
                       personnelName: event.target.value,
+                    }))
+                  }
+                  className="w-full border rounded p-2"
+                />
+
+                <input
+                  type="text"
+                  placeholder="Your Department"
+                  value={newRequest.department}
+                  onChange={(event) =>
+                    setNewRequest((prev) => ({
+                      ...prev,
+                      department: event.target.value,
                     }))
                   }
                   className="w-full border rounded p-2"
@@ -1987,6 +2011,9 @@ export default function BriechStorageSystem() {
                       Personnel
                     </th>
                     <th className="px-3 py-2 text-left font-semibold text-gray-700">
+                      Department
+                    </th>
+                    <th className="px-3 py-2 text-left font-semibold text-gray-700">
                       Items (Qty)
                     </th>
                     <th className="px-3 py-2 text-left font-semibold text-gray-700">
@@ -2023,6 +2050,9 @@ export default function BriechStorageSystem() {
                             )}
                           </div>
                         </div>
+                      </td>
+                      <td className="px-3 py-2 text-sm text-gray-700">
+                        {request.department || "—"}
                       </td>
                       <td className="px-3 py-2 text-sm text-gray-700 space-y-1">
                         {request.items && request.items.length > 0 ? (
@@ -2591,6 +2621,12 @@ export default function BriechStorageSystem() {
                   </div>
                   <div className="text-lg font-semibold">
                     {selectedRequest.personnelName || "N/A"}
+                  </div>
+                  <div className="text-xs text-gray-500 mt-1">
+                    Department:{" "}
+                    <span className="font-semibold">
+                      {selectedRequest.department || "N/A"}
+                    </span>
                   </div>
                 </div>
               </div>

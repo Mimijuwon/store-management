@@ -75,6 +75,7 @@ async function initDb() {
     CREATE TABLE IF NOT EXISTS requests (
       id SERIAL PRIMARY KEY,
       personnel_name TEXT NOT NULL,
+      department TEXT,
       status TEXT NOT NULL DEFAULT 'PENDING',
       requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       approved_at TIMESTAMPTZ,
@@ -118,6 +119,9 @@ async function initDb() {
 
     ALTER TABLE requests
       ADD COLUMN IF NOT EXISTS face_image TEXT;
+
+    ALTER TABLE requests
+      ADD COLUMN IF NOT EXISTS department TEXT;
 
     -- Drop NOT NULL constraints from legacy request columns (component_id, quantity, description)
     DO $$
@@ -318,12 +322,12 @@ app.get("/requests/outstanding", async (_req, res) => {
 
 app.post("/requests", async (req, res) => {
   try {
-    const { personnelName, items, faceImage } = req.body;
+    const { personnelName, department, items, faceImage } = req.body;
 
-    if (!personnelName || !Array.isArray(items) || items.length === 0) {
+    if (!personnelName || !department || !Array.isArray(items) || items.length === 0) {
       return res
         .status(400)
-        .json({ error: "personnelName and items are required" });
+        .json({ error: "personnelName, department and items are required" });
     }
 
     for (const item of items) {
@@ -355,10 +359,10 @@ app.post("/requests", async (req, res) => {
     try {
       await client.query("BEGIN");
       const requestInsert = await client.query(
-        `INSERT INTO requests (personnel_name, status, requested_at, face_image)
-         VALUES ($1,'PENDING',NOW(),$2)
+        `INSERT INTO requests (personnel_name, department, status, requested_at, face_image)
+         VALUES ($1,$2,'PENDING',NOW(),$3)
          RETURNING *`,
-        [personnelName, faceImage || null],
+        [personnelName, department, faceImage || null],
       );
       const request = requestInsert.rows[0];
 
@@ -590,12 +594,12 @@ app.patch("/requests/:id/status", requireAdmin, async (req, res) => {
 app.patch("/requests/:id", async (req, res) => {
   try {
     const id = Number(req.params.id);
-    const { personnelName, items, faceImage } = req.body;
+    const { personnelName, department, items, faceImage } = req.body;
 
-    if (!personnelName || !Array.isArray(items) || items.length === 0) {
+    if (!personnelName || !department || !Array.isArray(items) || items.length === 0) {
       return res
         .status(400)
-        .json({ error: "personnelName and items are required" });
+        .json({ error: "personnelName, department and items are required" });
     }
 
     for (const item of items) {
@@ -653,9 +657,10 @@ app.patch("/requests/:id", async (req, res) => {
       await client.query(
         `UPDATE requests
          SET personnel_name = $1,
-             face_image = COALESCE($3, face_image)
-         WHERE id = $2`,
-        [personnelName, id, faceImage || null],
+             department = $2,
+             face_image = COALESCE($4, face_image)
+         WHERE id = $3`,
+        [personnelName, department, id, faceImage || null],
       );
 
       await client.query(`DELETE FROM request_items WHERE request_id = $1`, [id]);
