@@ -140,6 +140,8 @@ export default function BriechStorageSystem() {
   const [isLoadingCamera, setIsLoadingCamera] = useState(false);
   const [editingRequestId, setEditingRequestId] = useState(null);
   const [requestSearchTerm, setRequestSearchTerm] = useState("");
+  const [selectedRequest, setSelectedRequest] = useState(null);
+  const [showRequestDetail, setShowRequestDetail] = useState(false);
 
   const [requestQuickFilter, setRequestQuickFilter] = useState("today"); // today | week | month | all
   const [requestStatusFilter, setRequestStatusFilter] = useState("all"); // all | pending | approved | returned
@@ -962,6 +964,80 @@ export default function BriechStorageSystem() {
     );
     setRequestError("");
     setShowRequestModal(true);
+  };
+
+  const openRequestDetail = (request) => {
+    setSelectedRequest(request);
+    setShowRequestDetail(true);
+  };
+
+  const closeRequestDetail = () => {
+    setShowRequestDetail(false);
+    setSelectedRequest(null);
+  };
+
+  const exportRequestsCsv = () => {
+    if (!filteredRequests || filteredRequests.length === 0) return;
+
+    const headers = [
+      "Request ID",
+      "Personnel",
+      "Status",
+      "Requested At",
+      "Approved At",
+      "Returned At",
+      "Component",
+      "Quantity",
+      "Unit",
+      "Item Description",
+    ];
+
+    const rows = [];
+    filteredRequests.forEach((req) => {
+      const base = [
+        req.id,
+        req.personnelName || "",
+        req.status || "",
+        req.requestedAt ? new Date(req.requestedAt).toISOString() : "",
+        req.approvedAt ? new Date(req.approvedAt).toISOString() : "",
+        req.returnedAt ? new Date(req.returnedAt).toISOString() : "",
+      ];
+      if (req.items && req.items.length > 0) {
+        req.items.forEach((item) => {
+          rows.push([
+            ...base,
+            item.componentName || "",
+            item.quantity ?? "",
+            item.unit || "",
+            item.description || "",
+          ]);
+        });
+      } else {
+        rows.push([...base, "", "", "", ""]);
+      }
+    });
+
+    const csvContent = [headers, ...rows]
+      .map((row) =>
+        row
+          .map((value) => {
+            const safe = value == null ? "" : String(value);
+            return `"${safe.replace(/"/g, '""')}"`;
+          })
+          .join(","),
+      )
+      .join("\r\n");
+
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    const dateStr = new Date().toISOString().slice(0, 10);
+    link.download = `briech-requests-${dateStr}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   // Engineer-only view (no login required)
@@ -1876,21 +1952,30 @@ export default function BriechStorageSystem() {
                   </div>
                 </div>
 
-                <button
-                  onClick={() => {
-                    stopFaceCapture();
-                    setEditingRequestId(null);
-                    setNewRequest({ personnelName: "" });
-                    setNewRequestItems([{ componentId: "", quantity: 1, description: "" }]);
-                    setRequestError("");
-                    setRequestFaceImage(null);
-                    setShowRequestModal(true);
-                  }}
-                  className="bg-blue-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-blue-700 flex items-center gap-2 self-start sm:self-auto"
-                >
-                  <Plus size={18} />
-                  New Request
-                </button>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => {
+                      stopFaceCapture();
+                      setEditingRequestId(null);
+                      setNewRequest({ personnelName: "" });
+                      setNewRequestItems([{ componentId: "", quantity: 1, description: "" }]);
+                      setRequestError("");
+                      setRequestFaceImage(null);
+                      setShowRequestModal(true);
+                    }}
+                    className="bg-blue-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-blue-700 flex items-center gap-2 self-start sm:self-auto"
+                  >
+                    <Plus size={18} />
+                    New Request
+                  </button>
+                  <button
+                    type="button"
+                    onClick={exportRequestsCsv}
+                    className="bg-gray-100 text-gray-800 px-4 py-2 rounded-lg text-sm font-semibold hover:bg-gray-200 border border-gray-300 flex items-center gap-2 self-start sm:self-auto"
+                  >
+                    Export CSV
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -1990,6 +2075,12 @@ export default function BriechStorageSystem() {
                       </td>
                       <td className="px-3 py-2">
                         <div className="flex flex-wrap gap-2">
+                          <button
+                            onClick={() => openRequestDetail(request)}
+                            className="px-3 py-1 bg-white text-gray-700 border border-gray-300 rounded text-xs hover:bg-gray-50"
+                          >
+                            View
+                          </button>
                           {request.status === "pending" && (
                             <button
                               onClick={() => startEditRequest(request)}
@@ -2457,6 +2548,102 @@ export default function BriechStorageSystem() {
                 >
                   Cancel
                 </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Request Detail Modal (Admin view) */}
+      {showRequestDetail && selectedRequest && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg p-6 max-w-lg w-full max-h-[90vh] overflow-y-auto">
+            <div className="flex items-start justify-between mb-4">
+              <div>
+                <h2 className="text-xl font-bold">Request Details</h2>
+                <p className="text-sm text-gray-500">
+                  ID: {selectedRequest.id} •{" "}
+                  {selectedRequest.status === "pending" && "Pending Approval"}
+                  {selectedRequest.status === "approved" && "Approved (Out)"}
+                  {selectedRequest.status === "returned" && "Returned"}
+                </p>
+              </div>
+              <button
+                onClick={closeRequestDetail}
+                className="text-gray-500 hover:text-gray-700 text-sm font-semibold"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div className="flex items-center gap-4">
+                {selectedRequest.faceImage && (
+                  <img
+                    src={selectedRequest.faceImage}
+                    alt={selectedRequest.personnelName}
+                    className="w-16 h-16 rounded-full object-cover border"
+                  />
+                )}
+                <div>
+                  <div className="text-sm text-gray-500 uppercase tracking-wide">
+                    Personnel
+                  </div>
+                  <div className="text-lg font-semibold">
+                    {selectedRequest.personnelName || "N/A"}
+                  </div>
+                </div>
+              </div>
+
+              <div className="border rounded-lg p-3 bg-gray-50 text-xs text-gray-700 space-y-1">
+                <div>
+                  <span className="font-semibold">Requested:</span>{" "}
+                  {selectedRequest.requestedAt
+                    ? new Date(selectedRequest.requestedAt).toLocaleString()
+                    : "N/A"}
+                </div>
+                {selectedRequest.approvedAt && (
+                  <div>
+                    <span className="font-semibold">Approved:</span>{" "}
+                    {new Date(selectedRequest.approvedAt).toLocaleString()}
+                  </div>
+                )}
+                {selectedRequest.returnedAt && (
+                  <div>
+                    <span className="font-semibold">Returned:</span>{" "}
+                    {new Date(selectedRequest.returnedAt).toLocaleString()}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <h3 className="text-sm font-semibold mb-2">Requested Items</h3>
+                <div className="space-y-2">
+                  {selectedRequest.items && selectedRequest.items.length > 0 ? (
+                    selectedRequest.items.map((item, idx) => (
+                      <div
+                        key={idx}
+                        className="flex items-start justify-between border rounded-lg px-3 py-2 bg-gray-50"
+                      >
+                        <div className="flex-1">
+                          <div className="font-semibold text-sm">
+                            {item.componentName || "Item"}
+                          </div>
+                          {item.description && (
+                            <div className="text-xs text-gray-500">
+                              {item.description}
+                            </div>
+                          )}
+                        </div>
+                        <div className="text-xs text-gray-700 whitespace-nowrap font-semibold">
+                          Qty: {item.quantity} {item.unit || ""}
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-xs text-gray-500">No items recorded.</p>
+                  )}
+                </div>
               </div>
             </div>
           </div>
