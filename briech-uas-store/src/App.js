@@ -156,9 +156,17 @@ export default function BriechStorageSystem() {
     const saved = localStorage.getItem("briech-admin-logged-in");
     return saved === "true";
   });
+  // Assembly unit login state
+  const [isAssemblyUnitLoggedIn, setIsAssemblyUnitLoggedIn] = useState(() => {
+    const saved = localStorage.getItem("briech-assembly-unit-logged-in");
+    return saved === "true";
+  });
   const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError] = useState("");
   const [showLoginModal, setShowLoginModal] = useState(false);
+  const [showAssemblyUnitLoginModal, setShowAssemblyUnitLoginModal] = useState(false);
+  const [assemblyUnitPassword, setAssemblyUnitPassword] = useState("");
+  const [assemblyUnitLoginError, setAssemblyUnitLoginError] = useState("");
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
 
@@ -284,6 +292,31 @@ export default function BriechStorageSystem() {
     stopFaceCapture();
   };
 
+  // Assembly unit login handler
+  const handleAssemblyUnitLogin = (e) => {
+    e.preventDefault();
+    setAssemblyUnitLoginError("");
+    
+    // Assembly unit password (you can change this)
+    const ASSEMBLY_UNIT_PASSWORD = process.env.REACT_APP_ASSEMBLY_UNIT_PASSWORD || "assembly123";
+    
+    if (assemblyUnitPassword === ASSEMBLY_UNIT_PASSWORD) {
+      setIsAssemblyUnitLoggedIn(true);
+      localStorage.setItem("briech-assembly-unit-logged-in", "true");
+      setAssemblyUnitPassword("");
+      setAssemblyUnitLoginError("");
+      setShowAssemblyUnitLoginModal(false);
+      setActiveTab("inventory");
+    } else {
+      setAssemblyUnitLoginError("Incorrect password. Please try again.");
+    }
+  };
+
+  const handleAssemblyUnitLogout = () => {
+    setIsAssemblyUnitLoggedIn(false);
+    localStorage.removeItem("briech-assembly-unit-logged-in");
+  };
+
   const handleResetAllData = async () => {
     setIsResetting(true);
     try {
@@ -304,8 +337,20 @@ export default function BriechStorageSystem() {
         });
 
         if (!response.ok) {
-          const errorData = await response.json().catch(() => ({ error: "Unknown error" }));
-          throw new Error(errorData.error || "Failed to reset data");
+          let errorMessage = "Failed to reset data";
+          if (response.status === 404) {
+            errorMessage = "Reset endpoint not found. Please redeploy the backend server with the latest code.";
+          } else if (response.status === 403) {
+            errorMessage = "Admin access required. Please check your admin token.";
+          } else {
+            try {
+              const errorData = await response.json();
+              errorMessage = errorData.error || errorData.details || errorMessage;
+            } catch (e) {
+              errorMessage = `Server error (${response.status}). Please check if the backend is deployed with the latest code.`;
+            }
+          }
+          throw new Error(errorMessage);
         }
 
         // Reload all data from API
@@ -1163,8 +1208,308 @@ export default function BriechStorageSystem() {
     URL.revokeObjectURL(url);
   };
 
+  // Assembly unit view (limited access - only add inventory)
+  if (isAssemblyUnitLoggedIn && !isAdminLoggedIn) {
+    return (
+      <div className="min-h-screen bg-gray-50">
+        <div className="bg-green-600 text-white px-4 py-4 sm:px-6 sm:py-6 shadow-lg">
+          <div className="max-w-7xl mx-auto">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-3">
+                <Package size={32} />
+                <div>
+                  <h1 className="text-2xl font-bold">Assembly Unit - Inventory Management</h1>
+                  <p className="text-green-100 text-sm">
+                    Add new components to inventory
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={handleAssemblyUnitLogout}
+                  className="bg-white bg-opacity-20 text-white px-4 py-2 rounded-lg font-semibold hover:bg-opacity-30 transition-colors duration-150"
+                >
+                  Logout
+                </button>
+                <button
+                  onClick={() => setShowAddModal(true)}
+                  className="bg-white text-green-600 px-4 py-2 rounded-lg font-semibold hover:bg-green-50 flex items-center gap-2 transition-colors duration-150"
+                >
+                  <Plus size={20} />
+                  Add Component
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="max-w-7xl mx-auto px-2 sm:px-4 py-4">
+          <div className="bg-white rounded-lg shadow mb-6">
+            <div className="p-4 border-b">
+              <h2 className="text-xl font-bold">Inventory</h2>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className="bg-white p-4 rounded-lg shadow transition-shadow duration-150">
+              <div className="flex items-center gap-2 mb-4 border-b pb-2">
+                <Search size={20} className="text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Search components..."
+                  value={searchTerm}
+                  onChange={(event) => setSearchTerm(event.target.value)}
+                  className="flex-1 border-0 focus:ring-0 text-lg"
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-4">
+              {filteredComponents.map((component) => (
+                <div
+                  key={component.id}
+                  className="bg-white p-4 rounded-lg shadow hover:shadow-lg transition-transform transition-shadow duration-150 transform hover:-translate-y-0.5"
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    {component.image && (
+                      <img
+                        src={component.image}
+                        alt={component.name}
+                        className="w-24 h-24 object-cover rounded-lg"
+                      />
+                    )}
+                    <div className="flex-1">
+                      <div className="flex items-center gap-3 mb-2 flex-wrap">
+                        <h3 className="text-xl font-bold text-gray-800">
+                          {component.name}
+                        </h3>
+                        {component.quantity <= component.minStock && (
+                          <span className="px-2 py-1 bg-yellow-100 text-yellow-700 rounded text-sm flex items-center gap-1">
+                            <AlertTriangle size={14} />
+                            Low Stock
+                          </span>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-gray-600">
+                        <div>
+                          <span className="font-semibold">Category:</span>{" "}
+                          {component.category || "N/A"}
+                        </div>
+                        <div>
+                          <span className="font-semibold">Quantity:</span>{" "}
+                          {component.quantity} {component.unit}
+                        </div>
+                        <div>
+                          <span className="font-semibold">Min Stock:</span>{" "}
+                          {component.minStock} {component.unit}
+                        </div>
+                        <div>
+                          <span className="font-semibold">Location:</span>{" "}
+                          {component.location || "N/A"}
+                        </div>
+                        <div>
+                          <span className="font-semibold">Supplier:</span>{" "}
+                          {component.supplier || "N/A"}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+
+              {filteredComponents.length === 0 && (
+                <div className="bg-white p-12 rounded-lg shadow text-center text-gray-500">
+                  <Package size={48} className="mx-auto mb-4 text-gray-300" />
+                  <p className="text-lg">No components found</p>
+                  <p className="text-sm">Add your first component to get started</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Add Component Modal - same as admin but with green theme */}
+        {showAddModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-lg p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
+              <h2 className="text-2xl font-bold mb-4">Add New Component</h2>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-semibold mb-2">
+                    Component Image
+                  </label>
+                  <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center">
+                    {newComponent.image ? (
+                      <div className="space-y-2">
+                        <img
+                          src={newComponent.image}
+                          alt="Preview"
+                          className="w-full h-48 object-cover rounded-lg"
+                        />
+                        <button
+                          onClick={() =>
+                            setNewComponent((prev) => ({ ...prev, image: null }))
+                          }
+                          className="text-sm text-red-600 hover:text-red-700"
+                        >
+                          Remove Image
+                        </button>
+                      </div>
+                    ) : (
+                      <label className="cursor-pointer flex flex-col items-center space-y-2">
+                        <Package size={48} className="text-gray-400" />
+                        <p className="text-sm text-gray-600">Click to upload image</p>
+                        <p className="text-xs text-gray-400">PNG, JPG up to 10MB</p>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={handleImageUpload}
+                          className="hidden"
+                        />
+                      </label>
+                    )}
+                  </div>
+                </div>
+                <input
+                  type="text"
+                  placeholder="Component Name"
+                  value={newComponent.name}
+                  onChange={(event) =>
+                    setNewComponent((prev) => ({ ...prev, name: event.target.value }))
+                  }
+                  className="w-full border rounded p-2"
+                />
+                <div className="space-y-2">
+                  <label className="block text-sm font-semibold">
+                    Category
+                  </label>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <select
+                      value={newComponent.category}
+                      onChange={(event) =>
+                        setNewComponent((prev) => ({
+                          ...prev,
+                          category: event.target.value,
+                        }))
+                      }
+                      className="w-full border rounded p-2 sm:w-1/2"
+                    >
+                      {categories.map((category) => (
+                        <option key={category} value={category}>
+                          {category}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="flex flex-1 gap-2">
+                      <input
+                        type="text"
+                        placeholder="New category (optional)"
+                        value={newCategoryName}
+                        onChange={(event) =>
+                          setNewCategoryName(event.target.value)
+                        }
+                        className="flex-1 border rounded p-2"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleAddCategory}
+                        className="px-3 py-2 bg-slate-800 text-white rounded font-semibold text-xs hover:bg-slate-900 whitespace-nowrap"
+                      >
+                        Add
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <input
+                    type="number"
+                    placeholder="Quantity"
+                    value={newComponent.quantity}
+                    onChange={(event) =>
+                      setNewComponent((prev) => ({
+                        ...prev,
+                        quantity: parseInt(event.target.value, 10) || 0,
+                      }))
+                    }
+                    className="w-full border rounded p-2"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Unit (pcs, kg, etc)"
+                    value={newComponent.unit}
+                    onChange={(event) =>
+                      setNewComponent((prev) => ({ ...prev, unit: event.target.value }))
+                    }
+                    className="w-full border rounded p-2"
+                  />
+                </div>
+                <input
+                  type="number"
+                  placeholder="Minimum Stock Level"
+                  value={newComponent.minStock}
+                  onChange={(event) =>
+                    setNewComponent((prev) => ({
+                      ...prev,
+                      minStock: parseInt(event.target.value, 10) || 0,
+                    }))
+                  }
+                  className="w-full border rounded p-2"
+                />
+                <input
+                  type="text"
+                  placeholder="Storage Location"
+                  value={newComponent.location}
+                  onChange={(event) =>
+                    setNewComponent((prev) => ({ ...prev, location: event.target.value }))
+                  }
+                  className="w-full border rounded p-2"
+                />
+                <input
+                  type="text"
+                  placeholder="Supplier"
+                  value={newComponent.supplier}
+                  onChange={(event) =>
+                    setNewComponent((prev) => ({ ...prev, supplier: event.target.value }))
+                  }
+                  className="w-full border rounded p-2"
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleAddComponent}
+                    className="flex-1 bg-green-600 text-white py-2 rounded font-semibold hover:bg-green-700"
+                  >
+                    Add Component
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowAddModal(false);
+                      setEditingComponentId(null);
+                      setNewComponent({
+                        name: "",
+                        category: "Electronics",
+                        quantity: 0,
+                        unit: "pcs",
+                        minStock: 5,
+                        location: "",
+                        supplier: "",
+                        image: null,
+                      });
+                    }}
+                    className="flex-1 bg-gray-300 text-gray-700 py-2 rounded font-semibold hover:bg-gray-400"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   // Engineer-only view (no login required)
-  if (!isAdminLoggedIn) {
+  if (!isAdminLoggedIn && !isAssemblyUnitLoggedIn) {
     return (
       <div className="min-h-screen bg-gray-50">
         <div className="bg-blue-600 text-white px-4 py-4 sm:px-6 sm:py-6 shadow-lg">
@@ -1178,9 +1523,12 @@ export default function BriechStorageSystem() {
                 </p>
               </div>
             </div>
-            <div className="bg-white bg-opacity-10 rounded-lg p-4">
+            <div className="bg-white bg-opacity-10 rounded-lg p-4 space-y-2">
               <p className="text-sm text-blue-100">
                 Store Keeper? <button onClick={() => setShowLoginModal(true)} className="underline font-semibold">Login here</button>
+              </p>
+              <p className="text-sm text-blue-100">
+                Assembly Unit? <button onClick={() => setShowAssemblyUnitLoginModal(true)} className="underline font-semibold">Login here</button>
               </p>
             </div>
           </div>
@@ -1615,6 +1963,55 @@ export default function BriechStorageSystem() {
                       setShowLoginModal(false);
                       setLoginPassword("");
                       setLoginError("");
+                    }}
+                    className="flex-1 bg-gray-300 text-gray-700 py-2 rounded font-semibold hover:bg-gray-400"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* Login Modal for Assembly Unit */}
+        {showAssemblyUnitLoginModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-lg p-6 max-w-md w-full">
+              <h2 className="text-2xl font-bold mb-4">Assembly Unit Login</h2>
+              <form onSubmit={handleAssemblyUnitLogin} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-semibold mb-2">
+                    Password
+                  </label>
+                  <input
+                    type="password"
+                    value={assemblyUnitPassword}
+                    onChange={(e) => {
+                      setAssemblyUnitPassword(e.target.value);
+                      setAssemblyUnitLoginError("");
+                    }}
+                    placeholder="Enter assembly unit password"
+                    className="w-full border rounded p-2"
+                    autoFocus
+                  />
+                </div>
+                {assemblyUnitLoginError && (
+                  <p className="text-sm text-red-600">{assemblyUnitLoginError}</p>
+                )}
+                <div className="flex gap-2">
+                  <button
+                    type="submit"
+                    className="flex-1 bg-green-600 text-white py-2 rounded font-semibold hover:bg-green-700"
+                  >
+                    Login
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowAssemblyUnitLoginModal(false);
+                      setAssemblyUnitPassword("");
+                      setAssemblyUnitLoginError("");
                     }}
                     className="flex-1 bg-gray-300 text-gray-700 py-2 rounded font-semibold hover:bg-gray-400"
                   >
