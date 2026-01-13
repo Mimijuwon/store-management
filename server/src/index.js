@@ -3,7 +3,6 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const { Pool } = require("pg");
-const { notifyRequestApproved, notifyRequestReturned, notifyLowStock } = require("./notifications");
 
 const app = express();
 
@@ -251,6 +250,78 @@ app.post("/components", async (req, res) => {
     res.status(201).json(saved);
   } catch (error) {
     console.error("Create component error", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+app.patch("/components/:id", requireAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ error: "Invalid id" });
+    }
+
+    const {
+      name,
+      categoryId,
+      categoryName,
+      quantity,
+      unit,
+      minStock,
+      location,
+      supplier,
+      imageUrl,
+    } = req.body;
+
+    if (!name) {
+      return res.status(400).json({ error: "Name is required" });
+    }
+
+    // Check if component exists
+    const componentCheck = await query("SELECT id FROM components WHERE id = $1", [id]);
+    if (componentCheck.rowCount === 0) {
+      return res.status(404).json({ error: "Component not found" });
+    }
+
+    const consumable =
+      categoryName && /consumable/i.test(categoryName.toString());
+
+    // Ensure categoryName is a string (not null/undefined)
+    const finalCategoryName = categoryName ? String(categoryName).trim() : "";
+
+    const result = await query(
+      `UPDATE components
+       SET name = $1,
+           category_id = $2,
+           category_name = $3,
+           quantity = $4,
+           unit = $5,
+           min_stock = $6,
+           location = $7,
+           supplier = $8,
+           image_url = $9,
+           consumable = $10,
+           updated_at = NOW()
+       WHERE id = $11
+       RETURNING id, name, category_id, category_name, quantity, unit, min_stock, location, supplier, image_url, consumable, created_at, updated_at`,
+      [
+        name,
+        categoryId || null,
+        finalCategoryName,
+        quantity ?? 0,
+        unit || "pcs",
+        minStock ?? 0,
+        location || "",
+        supplier || "",
+        imageUrl || "",
+        consumable,
+        id,
+      ],
+    );
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error("Update component error", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -579,47 +650,7 @@ app.patch("/requests/:id/status", requireAdmin, async (req, res) => {
 
       await client.query("COMMIT");
       client.release();
-
-      // Send email notifications (non-blocking)
-      const requestData = updated.rows[0];
-      if (status === "APPROVED") {
-        notifyRequestApproved({
-          personnelName: requestData.personnel_name,
-          department: requestData.department,
-          items: requestData.items || [],
-          requestedAt: requestData.requested_at,
-        }).catch((err) => console.error("Notification error (approved):", err));
-
-        // Check for low stock after approval
-        for (const item of items) {
-          const compCheck = await query(
-            `SELECT id, name, quantity, min_stock, category_name, location FROM components WHERE id = $1`,
-            [item.component_id],
-          );
-          if (compCheck.rowCount > 0) {
-            const comp = compCheck.rows[0];
-            if (comp.quantity <= comp.min_stock) {
-              notifyLowStock({
-                name: comp.name,
-                quantity: comp.quantity,
-                minStock: comp.min_stock,
-                category: comp.category_name,
-                location: comp.location,
-              }).catch((err) => console.error("Notification error (low stock):", err));
-            }
-          }
-        }
-      } else if (status === "RETURNED") {
-        notifyRequestReturned({
-          personnelName: requestData.personnel_name,
-          department: requestData.department,
-          items: requestData.items || [],
-          requestedAt: requestData.requested_at,
-          returnedAt: requestData.returned_at,
-        }).catch((err) => console.error("Notification error (returned):", err));
-      }
-
-      res.json(requestData);
+      res.json(updated.rows[0]);
     } catch (error) {
       await client.query("ROLLBACK");
       client.release();
@@ -828,6 +859,36 @@ app.delete("/components/:id", requireAdmin, async (req, res) => {
     res.status(204).end();
   } catch (error) {
     console.error("Delete component error", error);
+    res.status(500).json({ error: "Internal server error", details: error.message });
+  }
+});
+
+// Reset all data (admin only)
+app.post("/reset", requireAdmin, async (req, res) => {
+  try {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      // Delete in order to respect foreign key constraints
+      await client.query("DELETE FROM usage_history");
+      await client.query("DELETE FROM request_items");
+      await client.query("DELETE FROM requests");
+      await client.query("DELETE FROM components");
+      // Keep categories - they're just metadata
+      // If you want to reset categories too, uncomment:
+      // await client.query("DELETE FROM categories");
+
+      await client.query("COMMIT");
+      client.release();
+      res.json({ message: "All data has been reset successfully" });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      client.release();
+      throw error;
+    }
+  } catch (error) {
+    console.error("Reset data error", error);
     res.status(500).json({ error: "Internal server error", details: error.message });
   }
 });

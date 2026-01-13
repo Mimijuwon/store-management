@@ -108,6 +108,7 @@ export default function BriechStorageSystem() {
   const [showUsageModal, setShowUsageModal] = useState(false);
   const [showRequestModal, setShowRequestModal] = useState(false);
   const [selectedComponent, setSelectedComponent] = useState(null);
+  const [editingComponentId, setEditingComponentId] = useState(null);
   const [requests, setRequests] = useState([]);
   const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
 
@@ -158,6 +159,8 @@ export default function BriechStorageSystem() {
   const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError] = useState("");
   const [showLoginModal, setShowLoginModal] = useState(false);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
 
   const startFaceCapture = async () => {
     setIsLoadingCamera(true);
@@ -281,6 +284,69 @@ export default function BriechStorageSystem() {
     stopFaceCapture();
   };
 
+  const handleResetAllData = async () => {
+    setIsResetting(true);
+    try {
+      if (API_BASE) {
+        const adminToken = process.env.REACT_APP_ADMIN_TOKEN || "";
+        if (!adminToken) {
+          alert("Admin token not configured. Cannot reset data.");
+          setIsResetting(false);
+          return;
+        }
+
+        const response = await fetch(`${API_BASE}/reset`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Admin-Token": adminToken,
+          },
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({ error: "Unknown error" }));
+          throw new Error(errorData.error || "Failed to reset data");
+        }
+
+        // Reload all data from API
+        const [componentsRes, usageRes, requestsRes] = await Promise.all([
+          fetch(`${API_BASE}/components`),
+          fetch(`${API_BASE}/usage`),
+          fetch(`${API_BASE}/requests`),
+        ]);
+
+        if (componentsRes.ok) {
+          const comps = await componentsRes.json();
+          setComponents(comps.map(fromApiComponent));
+        }
+        if (usageRes.ok) {
+          const usage = await usageRes.json();
+          setUsageHistory(usage.map(fromApiUsage));
+        }
+        if (requestsRes.ok) {
+          const reqs = await requestsRes.json();
+          setRequests(reqs.map(fromApiRequest));
+        }
+      } else {
+        // Clear local storage
+        await storage.set("briech-components", JSON.stringify([]));
+        await storage.set("briech-usage", JSON.stringify([]));
+        await storage.set("briech-requests", JSON.stringify([]));
+        setComponents([]);
+        setUsageHistory([]);
+        setRequests([]);
+      }
+
+      setShowResetConfirm(false);
+      alert("All data has been reset successfully.");
+    } catch (error) {
+      console.error("Reset data error", error);
+      alert(`Failed to reset data: ${error.message}`);
+    } finally {
+      setIsResetting(false);
+    }
+  };
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -364,8 +430,25 @@ export default function BriechStorageSystem() {
     }
   };
 
+  const handleEditComponent = (component) => {
+    setEditingComponentId(component.id);
+    setNewComponent({
+      name: component.name,
+      category: component.category || "Electronics",
+      quantity: component.quantity,
+      unit: component.unit || "pcs",
+      minStock: component.minStock || 5,
+      location: component.location || "",
+      supplier: component.supplier || "",
+      image: component.image || null,
+    });
+    setShowAddModal(true);
+  };
+
   const handleAddComponent = async () => {
     if (!newComponent.name || newComponent.quantity < 0) return;
+
+    const isEditing = editingComponentId !== null;
 
     if (API_BASE) {
       try {
@@ -380,36 +463,61 @@ export default function BriechStorageSystem() {
           supplier: newComponent.supplier,
           imageUrl: newComponent.image,
         };
-        console.log("Sending to API - categoryName:", payload.categoryName, "full payload:", payload);
         
-        const response = await fetch(`${API_BASE}/components`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
+        const url = isEditing ? `${API_BASE}/components/${editingComponentId}` : `${API_BASE}/components`;
+        const method = isEditing ? "PATCH" : "POST";
+        const adminToken = process.env.REACT_APP_ADMIN_TOKEN || "";
+        
+        const headers = { "Content-Type": "application/json" };
+        if (isEditing && adminToken) {
+          headers["X-Admin-Token"] = adminToken;
+        }
+        
+        const response = await fetch(url, {
+          method,
+          headers,
           body: JSON.stringify(payload),
         });
+        
         if (response.ok) {
-          const created = await response.json();
-          console.log("Received from API - category_name:", created.category_name, "full response:", created);
-          const normalized = fromApiComponent(created);
-          console.log("Normalized component - category:", normalized.category);
-          setComponents((prev) => [normalized, ...prev]);
+          const result = await response.json();
+          const normalized = fromApiComponent(result);
+          
+          if (isEditing) {
+            setComponents((prev) =>
+              prev.map((c) => (String(c.id) === String(editingComponentId) ? normalized : c))
+            );
+          } else {
+            setComponents((prev) => [normalized, ...prev]);
+          }
         } else {
           const errorData = await response.json();
           console.error("API error response:", errorData);
+          alert(`Failed to ${isEditing ? "update" : "create"} component: ${errorData.error || "Unknown error"}`);
         }
       } catch (error) {
-        console.error("Error creating component via API", error);
+        console.error(`Error ${isEditing ? "updating" : "creating"} component via API`, error);
+        alert(`Failed to ${isEditing ? "update" : "create"} component. Please try again.`);
       }
     } else {
-      const component = {
-        ...newComponent,
-        id: Date.now().toString(),
-        addedDate: new Date().toISOString(),
-      };
-
-      const updated = [...components, component];
-      setComponents(updated);
-      await saveData(updated, usageHistory);
+      if (isEditing) {
+        const updated = components.map((c) =>
+          String(c.id) === String(editingComponentId)
+            ? { ...c, ...newComponent }
+            : c
+        );
+        setComponents(updated);
+        await saveData(updated, usageHistory);
+      } else {
+        const component = {
+          ...newComponent,
+          id: Date.now().toString(),
+          addedDate: new Date().toISOString(),
+        };
+        const updated = [...components, component];
+        setComponents(updated);
+        await saveData(updated, usageHistory);
+      }
     }
 
     setNewComponent({
@@ -422,6 +530,7 @@ export default function BriechStorageSystem() {
       supplier: "",
       image: null,
     });
+    setEditingComponentId(null);
     setShowAddModal(false);
   };
 
@@ -535,7 +644,8 @@ export default function BriechStorageSystem() {
       return;
     }
 
-    if (!requestFaceImage) {
+    // Only require face capture for non-admin (engineer) submissions
+    if (!isAdminLoggedIn && !requestFaceImage) {
       setRequestError("Please capture your face before submitting.");
       return;
     }
@@ -588,7 +698,8 @@ export default function BriechStorageSystem() {
             personnelName: newRequest.personnelName,
             department: newRequest.department,
             items: items,
-            faceImage: requestFaceImage,
+            // Admin-created requests do not need / send a face image
+            faceImage: isAdminLoggedIn ? null : requestFaceImage,
           }),
         });
         if (response.ok) {
@@ -637,7 +748,8 @@ export default function BriechStorageSystem() {
           id: Date.now().toString(),
           personnelName: newRequest.personnelName,
           department: newRequest.department,
-          faceImage: requestFaceImage,
+          // Admin-created requests do not store a face image
+          faceImage: isAdminLoggedIn ? null : requestFaceImage,
           items: newRequestItems.map((i) => ({
             ...i,
             componentName:
@@ -1292,76 +1404,78 @@ export default function BriechStorageSystem() {
                   className="w-full border rounded p-2"
                 />
 
-                <div className="space-y-2">
-                  <label className="block text-sm font-semibold">
-                    Face Capture {requestFaceImage && <span className="text-green-600">✓</span>}
-                  </label>
-                  
-                  {requestFaceImage && !isCapturingFace && (
-                    <div className="mb-2 flex flex-col items-center">
-                      <img
-                        src={requestFaceImage}
-                        alt="Captured face"
-                        className="w-32 h-32 object-cover rounded-full border-2 border-green-500 shadow-md"
-                      />
-                      <p className="text-xs text-gray-500 mt-2">Face captured successfully</p>
-                    </div>
-                  )}
-                  
-                  {isCapturingFace && (
-                    <div className="mb-2 relative bg-gray-900 rounded-lg overflow-hidden">
-                      {isLoadingCamera && (
-                        <div className="absolute inset-0 flex items-center justify-center bg-gray-900 bg-opacity-75 z-10">
-                          <div className="text-white text-sm">Starting camera...</div>
+                {!isAdminLoggedIn && (
+                  <div className="space-y-2">
+                    <label className="block text-sm font-semibold">
+                      Face Capture {requestFaceImage && <span className="text-green-600">✓</span>}
+                    </label>
+                    
+                    {requestFaceImage && !isCapturingFace && (
+                      <div className="mb-2 flex flex-col items-center">
+                        <img
+                          src={requestFaceImage}
+                          alt="Captured face"
+                          className="w-32 h-32 object-cover rounded-full border-2 border-green-500 shadow-md"
+                        />
+                        <p className="text-xs text-gray-500 mt-2">Face captured successfully</p>
+                      </div>
+                    )}
+                    
+                    {isCapturingFace && (
+                      <div className="mb-2 relative bg-gray-900 rounded-lg overflow-hidden">
+                        {isLoadingCamera && (
+                          <div className="absolute inset-0 flex items-center justify-center bg-gray-900 bg-opacity-75 z-10">
+                            <div className="text-white text-sm">Starting camera...</div>
+                          </div>
+                        )}
+                        <video
+                          ref={videoRef}
+                          className="w-full h-auto max-h-64 object-cover"
+                          autoPlay
+                          playsInline
+                          muted
+                        />
+                        <div className="absolute bottom-2 left-0 right-0 flex justify-center gap-2">
+                          <button
+                            type="button"
+                            onClick={captureFaceImage}
+                            disabled={isLoadingCamera}
+                            className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg"
+                          >
+                            📷 Capture
+                          </button>
+                          <button
+                            type="button"
+                            onClick={stopFaceCapture}
+                            disabled={isLoadingCamera}
+                            className="px-4 py-2 bg-gray-700 text-white rounded-lg text-sm font-semibold hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg"
+                          >
+                            Cancel
+                          </button>
                         </div>
-                      )}
-                      <video
-                        ref={videoRef}
-                        className="w-full h-auto max-h-64 object-cover"
-                        autoPlay
-                        playsInline
-                        muted
-                      />
-                      <div className="absolute bottom-2 left-0 right-0 flex justify-center gap-2">
+                      </div>
+                    )}
+                    
+                    {!isCapturingFace && (
+                      <div className="flex flex-wrap gap-2">
                         <button
                           type="button"
-                          onClick={captureFaceImage}
+                          onClick={startFaceCapture}
                           disabled={isLoadingCamera}
-                          className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg"
+                          className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                         >
-                          📷 Capture
-                        </button>
-                        <button
-                          type="button"
-                          onClick={stopFaceCapture}
-                          disabled={isLoadingCamera}
-                          className="px-4 py-2 bg-gray-700 text-white rounded-lg text-sm font-semibold hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg"
-                        >
-                          Cancel
+                          {isLoadingCamera ? (
+                            <>⏳ Starting...</>
+                          ) : requestFaceImage ? (
+                            <>🔄 Retake Face Capture</>
+                          ) : (
+                            <>📷 Start Camera</>
+                          )}
                         </button>
                       </div>
-                    </div>
-                  )}
-                  
-                  {!isCapturingFace && (
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={startFaceCapture}
-                        disabled={isLoadingCamera}
-                        className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                      >
-                        {isLoadingCamera ? (
-                          <>⏳ Starting...</>
-                        ) : requestFaceImage ? (
-                          <>🔄 Retake Face Capture</>
-                        ) : (
-                          <>📷 Start Camera</>
-                        )}
-                      </button>
-                    </div>
-                  )}
-                </div>
+                    )}
+                  </div>
+                )}
 
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
@@ -1511,6 +1625,48 @@ export default function BriechStorageSystem() {
             </div>
           </div>
         )}
+
+        {/* Reset Confirmation Modal */}
+        {showResetConfirm && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-lg p-6 max-w-md w-full">
+              <h2 className="text-2xl font-bold mb-4 text-red-600">⚠️ Reset All Data</h2>
+              <div className="space-y-4">
+                <p className="text-gray-700">
+                  <strong>This action cannot be undone!</strong>
+                </p>
+                <p className="text-sm text-gray-600">
+                  This will permanently delete:
+                </p>
+                <ul className="list-disc list-inside text-sm text-gray-600 space-y-1 ml-4">
+                  <li>All inventory components</li>
+                  <li>All requests</li>
+                  <li>All usage history</li>
+                </ul>
+                <p className="text-sm text-gray-500 mt-4">
+                  Categories will be preserved. Are you absolutely sure you want to proceed?
+                </p>
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleResetAllData}
+                    disabled={isResetting}
+                    className="flex-1 bg-red-600 text-white py-2 rounded font-semibold hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isResetting ? "Resetting..." : "Yes, Reset Everything"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowResetConfirm(false)}
+                    disabled={isResetting}
+                    className="flex-1 bg-gray-300 text-gray-700 py-2 rounded font-semibold hover:bg-gray-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -1531,6 +1687,12 @@ export default function BriechStorageSystem() {
               </div>
             </div>
             <div className="flex items-center gap-3">
+              <button
+                onClick={() => setShowResetConfirm(true)}
+                className="bg-red-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-red-700 transition-colors duration-150"
+              >
+                Reset All Data
+              </button>
               <button
                 onClick={handleAdminLogout}
                 className="bg-white bg-opacity-20 text-white px-4 py-2 rounded-lg font-semibold hover:bg-opacity-30 transition-colors duration-150"
@@ -1702,6 +1864,12 @@ export default function BriechStorageSystem() {
                           </button>
                         </>
                       )}
+                      <button
+                        onClick={() => handleEditComponent(component)}
+                        className="px-3 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors duration-150 flex items-center gap-1 justify-center"
+                      >
+                        Edit
+                      </button>
                       <button
                         onClick={() => handleDeleteComponent(component.id)}
                         className="px-3 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition-colors duration-150"
@@ -2165,7 +2333,9 @@ export default function BriechStorageSystem() {
       {showAddModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-lg p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
-            <h2 className="text-2xl font-bold mb-4">Add New Component</h2>
+            <h2 className="text-2xl font-bold mb-4">
+              {editingComponentId ? "Edit Component" : "Add New Component"}
+            </h2>
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-semibold mb-2">
@@ -2311,10 +2481,23 @@ export default function BriechStorageSystem() {
                   onClick={handleAddComponent}
                   className="flex-1 bg-blue-600 text-white py-2 rounded font-semibold hover:bg-blue-700"
                 >
-                  Add Component
+                  {editingComponentId ? "Update Component" : "Add Component"}
                 </button>
                 <button
-                  onClick={() => setShowAddModal(false)}
+                  onClick={() => {
+                    setShowAddModal(false);
+                    setEditingComponentId(null);
+                    setNewComponent({
+                      name: "",
+                      category: "Electronics",
+                      quantity: 0,
+                      unit: "pcs",
+                      minStock: 5,
+                      location: "",
+                      supplier: "",
+                      image: null,
+                    });
+                  }}
                   className="flex-1 bg-gray-300 text-gray-700 py-2 rounded font-semibold hover:bg-gray-400"
                 >
                   Cancel
@@ -2413,76 +2596,19 @@ export default function BriechStorageSystem() {
                 className="w-full border rounded p-2"
               />
 
-              <div className="space-y-2">
-                <label className="block text-sm font-semibold">
-                  Face Capture {requestFaceImage && <span className="text-green-600">✓</span>}
-                </label>
-                
-                {requestFaceImage && !isCapturingFace && (
-                  <div className="mb-2 flex flex-col items-center">
-                    <img
-                      src={requestFaceImage}
-                      alt="Captured face"
-                      className="w-32 h-32 object-cover rounded-full border-2 border-green-500 shadow-md"
-                    />
-                    <p className="text-xs text-gray-500 mt-2">Face captured successfully</p>
-                  </div>
-                )}
-                
-                {isCapturingFace && (
-                  <div className="mb-2 relative bg-gray-900 rounded-lg overflow-hidden">
-                    {isLoadingCamera && (
-                      <div className="absolute inset-0 flex items-center justify-center bg-gray-900 bg-opacity-75 z-10">
-                        <div className="text-white text-sm">Starting camera...</div>
-                      </div>
-                    )}
-                    <video
-                      ref={videoRef}
-                      className="w-full h-auto max-h-64 object-cover"
-                      autoPlay
-                      playsInline
-                      muted
-                    />
-                    <div className="absolute bottom-2 left-0 right-0 flex justify-center gap-2">
-                      <button
-                        type="button"
-                        onClick={captureFaceImage}
-                        disabled={isLoadingCamera}
-                        className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg"
-                      >
-                        📷 Capture
-                      </button>
-                      <button
-                        type="button"
-                        onClick={stopFaceCapture}
-                        disabled={isLoadingCamera}
-                        className="px-4 py-2 bg-gray-700 text-white rounded-lg text-sm font-semibold hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                )}
-                
-                {!isCapturingFace && (
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={startFaceCapture}
-                      disabled={isLoadingCamera}
-                      className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                    >
-                      {isLoadingCamera ? (
-                        <>⏳ Starting...</>
-                      ) : requestFaceImage ? (
-                        <>🔄 Retake Face Capture</>
-                      ) : (
-                        <>📷 Start Camera</>
-                      )}
-                    </button>
-                  </div>
-                )}
-              </div>
+              {/* Admin-side request modal: require department, but no face capture */}
+              <input
+                type="text"
+                placeholder="Department"
+                value={newRequest.department}
+                onChange={(event) =>
+                  setNewRequest((prev) => ({
+                    ...prev,
+                    department: event.target.value,
+                  }))
+                }
+                className="w-full border rounded p-2"
+              />
 
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
@@ -2680,6 +2806,48 @@ export default function BriechStorageSystem() {
                     <p className="text-xs text-gray-500">No items recorded.</p>
                   )}
                 </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reset Confirmation Modal */}
+      {showResetConfirm && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+            <h2 className="text-2xl font-bold mb-4 text-red-600">⚠️ Reset All Data</h2>
+            <div className="space-y-4">
+              <p className="text-gray-700">
+                <strong>This action cannot be undone!</strong>
+              </p>
+              <p className="text-sm text-gray-600">
+                This will permanently delete:
+              </p>
+              <ul className="list-disc list-inside text-sm text-gray-600 space-y-1 ml-4">
+                <li>All inventory components</li>
+                <li>All requests</li>
+                <li>All usage history</li>
+              </ul>
+              <p className="text-sm text-gray-500 mt-4">
+                Categories will be preserved. Are you absolutely sure you want to proceed?
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleResetAllData}
+                  disabled={isResetting}
+                  className="flex-1 bg-red-600 text-white py-2 rounded font-semibold hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isResetting ? "Resetting..." : "Yes, Reset Everything"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowResetConfirm(false)}
+                  disabled={isResetting}
+                  className="flex-1 bg-gray-300 text-gray-700 py-2 rounded font-semibold hover:bg-gray-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Cancel
+                </button>
               </div>
             </div>
           </div>
